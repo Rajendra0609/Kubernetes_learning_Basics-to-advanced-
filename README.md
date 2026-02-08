@@ -1,1110 +1,617 @@
-# Kubernetes Basics — “Hard Way (Pragmatic)” Step‑by‑Step
+# Advanced Kubernetes — The Hard Way (Step‑by‑Step, Real‑World Survival + Interview)
 
-> **Goal:** Build a *strong foundation* in Kubernetes (K8s) by doing the work manually enough to truly understand what’s happening—**without** hiding behind fully managed services. You’ll create a small cluster with `kubeadm`, then learn to operate it like a real SRE/DevOps engineer: debug, recover, and survive production‑style incidents.
+> **Goal:** Build a *strong* Kubernetes foundation by doing advanced things manually (the “hard way”), then practice **production-grade troubleshooting** and **incident survival commands**.
 >
-> **Why “Pragmatic Hard Way”?** The absolute “pure hard way” (manual certs + etcd + apiserver + controller-manager + scheduler + kubelet wiring) is excellent but time‑heavy. This README gives you **90% of the real-world value** in the shortest time:
-> - You **provision and bootstrap** your own cluster (no EKS/GKE/AKS magic)
-> - You **inspect and reason** about control-plane components, certs, kubeconfigs, etc.
-> - You practice **hands-on troubleshooting and critical commands** used in interviews and on-call.
-> - Optional appendix shows how to go even deeper.
+> **Who this is for:** DevOps/SRE/Platform engineers who already know basics (Pods/Deployments/Services) and want **deep control-plane understanding + real cluster debugging**.
 
 ---
 
-## Table of Contents
 
-1. [Prerequisites](#1-prerequisites)
-2. [Lab Setup (2 Nodes)](#2-lab-setup-2-nodes)
-3. [Install Container Runtime (containerd)](#3-install-container-runtime-containerd)
-4. [Install Kubernetes Tools](#4-install-kubernetes-tools)
-5. [Bootstrap Cluster with kubeadm](#5-bootstrap-cluster-with-kubeadm)
-6. [Kubernetes Objects — Basics You Must Know](#6-kubernetes-objects--basics-you-must-know)
-7. [Networking + Service Discovery](#7-networking--service-discovery)
-8. [Storage Basics](#8-storage-basics)
-9. [ConfigMaps, Secrets, and Safer Patterns](#9-configmaps-secrets-and-safer-patterns)
-10. [RBAC + Namespaces (Minimum Survival)](#10-rbac--namespaces-minimum-survival)
-11. [Probes, Resources, and Autoscaling](#11-probes-resources-and-autoscaling)
-12. [Debugging & Incident Commands (Must-Memorize)](#12-debugging--incident-commands-must-memorize)
-13. [Control Plane Internals (Real “Hard Way” Understanding)](#13-control-plane-internals-real-hard-way-understanding)
-14. [Disaster Recovery Drills](#14-disaster-recovery-drills)
-15. [Interview Drills (Fast Questions + Commands)](#15-interview-drills-fast-questions--commands)
-16. [Appendix A — Going “Full Hard Way” (Optional)](#appendix-a--going-full-hard-way-optional)
+# Table of Contents
 
----
+  - [✅ What you will be able to do after this](#what-you-will-be-able-to-do-after-this)
+  - [🧰 Prerequisites](#prerequisites)
+    - [Skills](#skills)
+    - [Recommended lab environment (choose one)](#recommended-lab-environment-choose-one)
+    - [Tools you should have](#tools-you-should-have)
+- [🧭 Learning Path (Modules)](#learning-path-modules)
+  - [Module 0 — Baseline: Observe Like an SRE (Must Know)](#module-0-baseline-observe-like-an-sre-must-know)
+    - [0.1 Context, namespaces, and quick health checks](#01-context-namespaces-and-quick-health-checks)
+    - [0.2 The 5 most used real-time triage commands](#02-the-5-most-used-real-time-triage-commands)
+    - [0.3 JSONPath / filtering (interview + real work)](#03-jsonpath-filtering-interview-real-work)
+  - [Module 1 — Build / Understand the Control Plane (Hard Way Concepts)](#module-1-build-understand-the-control-plane-hard-way-concepts)
+    - [1.1 Map components and their ports](#11-map-components-and-their-ports)
+    - [1.2 Certificates — inspect and debug expiry](#12-certificates-inspect-and-debug-expiry)
+    - [1.3 etcd health + snapshot (CRITICAL)](#13-etcd-health-snapshot-critical)
+    - [Exercises](#exercises)
+  - [Module 2 — Scheduler & Controller Behavior (Advanced Scheduling)](#module-2-scheduler-controller-behavior-advanced-scheduling)
+    - [2.1 Read scheduling decisions](#21-read-scheduling-decisions)
+    - [2.2 Pod placement controls](#22-pod-placement-controls)
+    - [2.3 PriorityClasses (preemption)](#23-priorityclasses-preemption)
+  - [Module 3 — Networking: CNI, kube-proxy, DNS (Where most outages happen)](#module-3-networking-cni-kube-proxy-dns-where-most-outages-happen)
+    - [3.1 Understand the packet path](#31-understand-the-packet-path)
+    - [3.2 Service debugging checklist](#32-service-debugging-checklist)
+    - [3.3 DNS debugging (CoreDNS)](#33-dns-debugging-coredns)
+    - [3.4 Node-level networking survival commands](#34-node-level-networking-survival-commands)
+  - [Module 4 — Storage: Stateful survival](#module-4-storage-stateful-survival)
+    - [4.1 PVC stuck Pending](#41-pvc-stuck-pending)
+    - [4.2 StatefulSet pod stuck Terminating](#42-statefulset-pod-stuck-terminating)
+  - [Module 5 — Runtime & Kubelet: CRI, logs, and node failures](#module-5-runtime-kubelet-cri-logs-and-node-failures)
+    - [5.1 Kubelet and container runtime logs](#51-kubelet-and-container-runtime-logs)
+    - [5.2 Common pod failures (fast fixes)](#52-common-pod-failures-fast-fixes)
+  - [Module 6 — Security Hardening: RBAC, Pod Security, Secrets](#module-6-security-hardening-rbac-pod-security-secrets)
+    - [6.1 RBAC: debug “Forbidden” like a pro](#61-rbac-debug-forbidden-like-a-pro)
+    - [6.2 Pod Security (baseline/restricted)](#62-pod-security-baselinerestricted)
+    - [6.3 Secrets quick checks](#63-secrets-quick-checks)
+  - [Module 7 — Admission & Policies (Advanced “Platform Engineering”)](#module-7-admission-policies-advanced-platform-engineering)
+    - [7.1 Understand admission flow](#71-understand-admission-flow)
+    - [7.2 Quick policy testing pattern](#72-quick-policy-testing-pattern)
+  - [Module 8 — Upgrades, Rollbacks, and Safe Change Management](#module-8-upgrades-rollbacks-and-safe-change-management)
+    - [8.1 Safe rollout patterns](#81-safe-rollout-patterns)
+    - [8.2 Node maintenance](#82-node-maintenance)
+- [🚑 Production Incident Playbooks (Your Survival Kit)](#production-incident-playbooks-your-survival-kit)
+  - [Playbook A — “Service is DOWN” (fastest path)](#playbook-a-service-is-down-fastest-path)
+  - [Playbook B — “Node NotReady / Pressure”](#playbook-b-node-notready-pressure)
+  - [Playbook C — “Stuck Terminating” (pods/namespaces)](#playbook-c-stuck-terminating-podsnamespaces)
+  - [Playbook D — “Control plane down”](#playbook-d-control-plane-down)
+- [🧪 Capstone Labs (Do these to become “Real-World Ready”)](#capstone-labs-do-these-to-become-real-world-ready)
+    - [Lab 1 — etcd Disaster Recovery (Snapshot + Restore)](#lab-1-etcd-disaster-recovery-snapshot-restore)
+    - [Lab 2 — DNS Outage Simulation](#lab-2-dns-outage-simulation)
+    - [Lab 3 — NetworkPolicy Lockdown](#lab-3-networkpolicy-lockdown)
+    - [Lab 4 — Scheduler Constraints](#lab-4-scheduler-constraints)
+    - [Lab 5 — Production Rollout](#lab-5-production-rollout)
+    - [Lab 6 — Node Failure](#lab-6-node-failure)
+- [🎯 Interview Drill (High-Value Questions)](#interview-drill-high-value-questions)
+- [🧷 Command Cheat Sheet (Copy/Paste)](#command-cheat-sheet-copypaste)
+    - [Find what changed recently](#find-what-changed-recently)
+    - [Find high restart pods](#find-high-restart-pods)
+    - [Quick debug pod (network tools)](#quick-debug-pod-network-tools)
+    - [Ephemeral debug container (when allowed)](#ephemeral-debug-container-when-allowed)
+    - [Watch resources live](#watch-resources-live)
+- [✅ Next Steps (If you want me to generate more files)](#next-steps-if-you-want-me-to-generate-more-files)
+  - [License / Notes](#license-notes)
 
-## 1) Prerequisites
 
-### Recommended lab
-- **2 Linux VMs** (Ubuntu 22.04/24.04 recommended)
-  - **Control-plane**: 2 CPU, 4–8 GB RAM
-  - **Worker**: 2 CPU, 4 GB RAM
-- Static IPs or stable DHCP leases
-- Passwordless sudo for your user
 
-### Must-have basics
-- Comfortable with:
-  - `systemctl`, `journalctl`, `ip a`, `ss -lntp`, `curl`, `openssl`
-  - YAML editing (`vim`/`nano`)
+## ✅ What you will be able to do after this
 
-### Naming
-Set these (adjust IPs/hostnames):
-
-```bash
-# On control-plane
-sudo hostnamectl set-hostname k8s-cp
-
-# On worker
-sudo hostnamectl set-hostname k8s-w1
-```
-
-Ensure both nodes can resolve each other (use `/etc/hosts` if needed):
-
-```bash
-sudo tee -a /etc/hosts >/dev/null <<'EOF'
-10.0.0.10 k8s-cp
-10.0.0.11 k8s-w1
-EOF
-```
-
-Disable swap (required):
-
-```bash
-sudo swapoff -a
-sudo sed -i.bak '/ swap / s/^/#/' /etc/fstab
-```
-
-Kernel modules + sysctl:
-
-```bash
-sudo modprobe overlay
-sudo modprobe br_netfilter
-
-cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
-net.bridge.bridge-nf-call-iptables  = 1
-net.bridge.bridge-nf-call-ip6tables = 1
-net.ipv4.ip_forward                 = 1
-EOF
-sudo sysctl --system
-```
-
----
-
-## 2) Lab Setup (2 Nodes)
-
-> You will install:
-> - Container runtime: **containerd**
-> - Kubernetes: **kubeadm**, **kubelet**, **kubectl**
-> - CNI: **Calico** (common and interview-friendly)
-
-Repeat sections **3** and **4** on **both nodes**.
+- Explain and troubleshoot **control plane** components (apiserver / scheduler / controller-manager / etcd)
+- Debug **kubelet**, **container runtime**, **CNI**, **CoreDNS**, **kube-proxy**, **Ingress** problems
+- Perform **etcd snapshot/restore**, node drain/cordon, emergency isolation, and safe rollbacks
+- Write/understand **RBAC**, **Pod Security**, **NetworkPolicy**, and admission controls
+- Survive common incidents: **CrashLoopBackOff**, **OOMKilled**, **ImagePullBackOff**, DNS outage, node pressure, stuck terminating pods, broken routes, etc.
 
 ---
 
-## 3) Install Container Runtime (containerd)
+## 🧰 Prerequisites
 
-> If you already have containerd, still confirm `SystemdCgroup = true`.
+### Skills
+- Comfortable with Linux shell, networking basics (ports, routes), and YAML
+- Kubernetes fundamentals (kubectl, manifests)
 
-```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg lsb-release
-```
+### Recommended lab environment (choose one)
 
-Install containerd:
+**Option A (Best for “Hard Way”):** 3–4 Linux VMs (Ubuntu 22.04 recommended)
+- 1× control plane node, 2× worker nodes (add 2nd control plane later for HA)
 
-```bash
-sudo apt-get install -y containerd
-sudo mkdir -p /etc/containerd
-containerd config default | sudo tee /etc/containerd/config.toml >/dev/null
+**Option B (Quick local):** kind (for most labs) + one VM for node-level debugging
 
-# Important: enable systemd cgroups
-sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-
-sudo systemctl restart containerd
-sudo systemctl enable containerd
-```
-
-Verify:
-
-```bash
-sudo systemctl status containerd --no-pager
-```
+### Tools you should have
+- `kubectl`, `etcdctl`, `crictl`, `jq`, `curl`, `openssl`
+- `tcpdump`, `iproute2`, `conntrack`, `iptables`/`nft`
 
 ---
 
-## 4) Install Kubernetes Tools
+# 🧭 Learning Path (Modules)
 
-> Choose a stable K8s version and keep it consistent across nodes.
-> Replace `v1.29` with your desired minor release.
-
-```bash
-sudo apt-get update
-sudo apt-get install -y apt-transport-https ca-certificates curl
-
-# Kubernetes apt repository key + repo
-sudo mkdir -p /etc/apt/keyrings
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.29/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
-
-sudo apt-get update
-sudo apt-get install -y kubelet kubeadm kubectl
-sudo apt-mark hold kubelet kubeadm kubectl
-```
-
-Check:
-
-```bash
-kubeadm version
-kubectl version --client
-kubelet --version
-```
+> **How to use this README:**
+> - Do modules in order
+> - After each module, finish the **Checkpoint** and **Exercises**
+> - Keep a notes file: "symptom → checks → root cause → fix"
 
 ---
 
-## 5) Bootstrap Cluster with kubeadm
+## Module 0 — Baseline: Observe Like an SRE (Must Know)
 
-### 5.1 Control-plane init (on `k8s-cp`)
-
-Pick a Pod CIDR (Calico commonly uses `192.168.0.0/16`):
-
+### 0.1 Context, namespaces, and quick health checks
 ```bash
-sudo kubeadm init \
-  --pod-network-cidr=192.168.0.0/16 \
-  --apiserver-advertise-address=10.0.0.10
+kubectl config get-contexts
+kubectl config use-context <ctx>
+
+kubectl get nodes -owide
+kubectl get pods -A -owide
+kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 50
 ```
 
-Configure kubectl for your user:
-
+### 0.2 The 5 most used real-time triage commands
 ```bash
-mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
+kubectl describe pod <pod> -n <ns>
+kubectl logs <pod> -n <ns> --all-containers --tail=200
+kubectl logs <pod> -n <ns> -c <container> --previous
+kubectl get endpoints -n <ns> <svc> -o wide
+kubectl top nodes && kubectl top pods -A --containers
 ```
 
-### 5.2 Install CNI (Calico)
-
+### 0.3 JSONPath / filtering (interview + real work)
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
+kubectl get pod -n <ns> <pod> -o jsonpath='{.spec.nodeName}{"\n"}'
+kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name} {.status.phase}{"\n"}{end}'
+
+# who is restarting?
+kubectl get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses!=null) | .metadata.namespace+"/"+.metadata.name+" " + ( [.status.containerStatuses[].restartCount] | max | tostring )'
 ```
 
-Wait:
-
-```bash
-kubectl get nodes
-kubectl get pods -A -w
-```
-
-Expected: CoreDNS + Calico pods become `Running`.
-
-### 5.3 Join worker (on `k8s-w1`)
-
-From the `kubeadm init` output, copy the join command:
-
-```bash
-sudo kubeadm join 10.0.0.10:6443 --token <...> --discovery-token-ca-cert-hash sha256:<...>
-```
-
-Back on control-plane:
-
-```bash
-kubectl get nodes -o wide
-```
+✅ **Checkpoint:** You can quickly locate failing components and extract exact fields with JSONPath/JQ.
 
 ---
 
-## 6) Kubernetes Objects — Basics You Must Know
+## Module 1 — Build / Understand the Control Plane (Hard Way Concepts)
 
-### 6.1 Pods (the basic unit)
+> You can do this on a kubeadm cluster too, but the “hard way” mindset is: **certs, kubeconfigs, static pods, systemd, etcd**.
 
-Create a pod:
+### 1.1 Map components and their ports
+- **kube-apiserver:** 6443
+- **etcd:** 2379/2380
+- **kube-scheduler:** 10259
+- **kube-controller-manager:** 10257
+- **kubelet:** 10250
 
 ```bash
-kubectl run nginx-pod --image=nginx:1.25 --restart=Never
-kubectl get pod nginx-pod -o wide
-kubectl describe pod nginx-pod
+# where are control plane manifests? (kubeadm)
+ls -l /etc/kubernetes/manifests
+
+# check health endpoints (control plane)
+kubectl get --raw '/readyz?verbose'
+kubectl get --raw '/livez?verbose'
+kubectl get --raw '/healthz'
 ```
 
-Exec inside:
+### 1.2 Certificates — inspect and debug expiry
+```bash
+# list certs (kubeadm default)
+ls -l /etc/kubernetes/pki
+
+# check expiry
+openssl x509 -in /etc/kubernetes/pki/apiserver.crt -noout -dates -subject
+openssl x509 -in /etc/kubernetes/pki/ca.crt -noout -subject -issuer
+```
+
+### 1.3 etcd health + snapshot (CRITICAL)
+> **Always test restore in a safe environment.**
 
 ```bash
-kubectl exec -it nginx-pod -- bash
+# kubeadm typically runs etcd as a static pod; etcdctl needs TLS flags.
+# Replace paths if your cluster differs.
+export ETCDCTL_API=3
+
+etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  endpoint status --write-out=table
+
+etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  snapshot save /var/backups/etcd-$(date +%F-%H%M).db
+```
+
+✅ **Checkpoint:** You can explain each control plane component and validate etcd is healthy.
+
+### Exercises
+- Break DNS by scaling CoreDNS to 0 and restore
+- Expire a non-critical cert in a test env and recover (or rotate with kubeadm)
+
+---
+
+## Module 2 — Scheduler & Controller Behavior (Advanced Scheduling)
+
+### 2.1 Read scheduling decisions
+```bash
+kubectl describe pod <pod> -n <ns> | sed -n '/Events/,$p'
+kubectl get events -n <ns> --field-selector involvedObject.name=<pod> --sort-by=.metadata.creationTimestamp
+```
+
+### 2.2 Pod placement controls
+- NodeSelector, NodeAffinity, Taints/Tolerations, TopologySpreadConstraints
+
+```bash
+kubectl get nodes --show-labels
+kubectl taint nodes <node> dedicated=prod:NoSchedule
+kubectl describe node <node> | sed -n '/Taints/,$p'
+```
+
+### 2.3 PriorityClasses (preemption)
+```bash
+kubectl get priorityclass
+```
+
+✅ **Checkpoint:** You can force/avoid scheduling and interpret why scheduling failed.
+
+---
+
+## Module 3 — Networking: CNI, kube-proxy, DNS (Where most outages happen)
+
+### 3.1 Understand the packet path
+- Pod → veth → bridge (or eBPF) → node routing → service VIP (kube-proxy/eBPF) → destination
+
+### 3.2 Service debugging checklist
+```bash
+# 1) endpoints exist?
+kubectl get ep -n <ns> <svc> -o wide
+
+# 2) service ports?
+kubectl describe svc -n <ns> <svc>
+
+# 3) can we reach from inside?
+kubectl run -it --rm netshoot --image=nicolaka/netshoot --restart=Never -- bash
 # inside:
-nginx -v
-exit
+# curl -sv http://<svc>.<ns>.svc.cluster.local:<port>
 ```
 
-Delete:
-
+### 3.3 DNS debugging (CoreDNS)
 ```bash
-kubectl delete pod nginx-pod
+kubectl get pods -n kube-system -l k8s-app=kube-dns -owide
+kubectl logs -n kube-system -l k8s-app=kube-dns --tail=200
+kubectl exec -it -n kube-system deploy/coredns -- sh
+
+# from any pod
+kubectl exec -it <pod> -n <ns> -- nslookup kubernetes.default
+kubectl exec -it <pod> -n <ns> -- cat /etc/resolv.conf
 ```
 
-### 6.2 Deployments (stateless workloads)
-
+### 3.4 Node-level networking survival commands
 ```bash
-kubectl create deployment web --image=nginx:1.25
-kubectl scale deployment web --replicas=3
-kubectl get deploy,rs,pods -o wide
-```
-
-Rolling update:
-
-```bash
-kubectl set image deployment/web nginx=nginx:1.26
-kubectl rollout status deployment/web
-kubectl rollout history deployment/web
-```
-
-Rollback:
-
-```bash
-kubectl rollout undo deployment/web
-```
-
-### 6.3 ReplicaSets (usually managed by Deployments)
-
-```bash
-kubectl get rs
-kubectl describe rs -l app=web
-```
-
-### 6.4 DaemonSets (one pod per node)
-
-```bash
-kubectl create deployment dummy --image=busybox -- sleep 3600 || true
-kubectl delete deploy dummy || true
-
-cat <<'EOF' | kubectl apply -f -
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: node-logger
-spec:
-  selector:
-    matchLabels:
-      app: node-logger
-  template:
-    metadata:
-      labels:
-        app: node-logger
-    spec:
-      containers:
-      - name: bb
-        image: busybox:1.36
-        command: ["sh","-c","while true; do echo $(date) $(hostname); sleep 10; done"]
-EOF
-
-kubectl get ds,pods -o wide
-```
-
-### 6.5 Jobs / CronJobs (batch)
-
-```bash
-kubectl create job once --image=busybox:1.36 -- sh -c 'echo hello; sleep 2; echo done'
-kubectl logs job/once
-kubectl delete job once
-```
-
----
-
-## 7) Networking + Service Discovery
-
-### 7.1 Services (ClusterIP/NodePort/LoadBalancer)
-
-Expose the `web` Deployment:
-
-```bash
-kubectl expose deployment web --port=80 --target-port=80 --name=web-svc
-kubectl get svc web-svc -o wide
-```
-
-Test DNS and service reachability from inside the cluster:
-
-```bash
-kubectl run -it --rm dns-test --image=busybox:1.36 --restart=Never -- sh
-# inside
-nslookup web-svc
-wget -qO- http://web-svc
-exit
-```
-
-Port-forward for local debugging (super useful):
-
-```bash
-kubectl port-forward svc/web-svc 8080:80
-# open http://localhost:8080
-```
-
-### 7.2 Ingress (concept)
-
-Ingress requires an Ingress Controller (nginx, traefik, etc.).
-In real-world, you will install one and route HTTP using Ingress resources.
-
-**Survival concept:**
-- Service = L4 load balancing inside cluster
-- Ingress = L7 routing from outside into services
-
----
-
-## 8) Storage Basics
-
-### 8.1 Volumes in a Pod (emptyDir)
-
-```bash
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: vol-demo
-spec:
-  containers:
-  - name: app
-    image: busybox:1.36
-    command: ["sh","-c","echo hi > /data/hello.txt; sleep 3600"]
-    volumeMounts:
-    - name: data
-      mountPath: /data
-  volumes:
-  - name: data
-    emptyDir: {}
-EOF
-
-kubectl exec -it vol-demo -- cat /data/hello.txt
-kubectl delete pod vol-demo
-```
-
-### 8.2 PersistentVolumeClaim (PVC) concept
-
-In cloud, StorageClasses dynamically provision PVs. In bare-metal, you often use NFS/Longhorn/Rook.
-
-**Must-know interview points:**
-- PVC = request for storage
-- PV = actual storage resource
-- StorageClass = dynamic provisioning policy
-
----
-
-## 9) ConfigMaps, Secrets, and Safer Patterns
-
-### 9.1 ConfigMap from literals
-
-```bash
-kubectl create configmap app-config --from-literal=LOG_LEVEL=debug --from-literal=FEATURE_X=true
-kubectl get cm app-config -o yaml
-```
-
-Consume in a Pod:
-
-```bash
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: cm-demo
-spec:
-  containers:
-  - name: app
-    image: busybox:1.36
-    command: ["sh","-c","env | grep -E 'LOG_LEVEL|FEATURE_X'; sleep 3600"]
-    envFrom:
-    - configMapRef:
-        name: app-config
-EOF
-
-kubectl logs cm-demo
-kubectl delete pod cm-demo
-```
-
-### 9.2 Secrets (base64 ≠ encryption)
-
-```bash
-kubectl create secret generic db-secret --from-literal=DB_USER=admin --from-literal=DB_PASS='S3cr3t!'
-kubectl get secret db-secret -o yaml
-```
-
-**Survival rule:** Treat Secrets carefully; don’t paste them in tickets/chats. Use sealed-secrets or external secret managers in real production.
-
----
-
-## 10) RBAC + Namespaces (Minimum Survival)
-
-Create namespace:
-
-```bash
-kubectl create ns dev
-kubectl get ns
-```
-
-List permissions (amazing for debugging access issues):
-
-```bash
-kubectl auth can-i create pods -n dev
-kubectl auth can-i '*' '*' --all-namespaces
-```
-
-Basic RBAC example (read-only pods in `dev`):
-
-```bash
-cat <<'EOF' | kubectl apply -f -
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-reader
-  namespace: dev
-rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get","list","watch"]
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: read-sa
-  namespace: dev
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: read-pods
-  namespace: dev
-subjects:
-- kind: ServiceAccount
-  name: read-sa
-  namespace: dev
-roleRef:
-  kind: Role
-  name: pod-reader
-  apiGroup: rbac.authorization.k8s.io
-EOF
-```
-
----
-
-## 11) Probes, Resources, and Autoscaling
-
-### 11.1 Liveness/Readiness probes
-
-```bash
-cat <<'EOF' | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: probe-demo
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: probe-demo
-  template:
-    metadata:
-      labels:
-        app: probe-demo
-    spec:
-      containers:
-      - name: web
-        image: nginx:1.25
-        ports:
-        - containerPort: 80
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 80
-          initialDelaySeconds: 3
-          periodSeconds: 5
-        livenessProbe:
-          httpGet:
-            path: /
-            port: 80
-          initialDelaySeconds: 10
-          periodSeconds: 10
-EOF
-
-kubectl get pods -l app=probe-demo -w
-```
-
-### 11.2 Requests & limits (critical in production)
-
-```bash
-kubectl set resources deployment/probe-demo \
-  --requests=cpu=50m,memory=64Mi \
-  --limits=cpu=200m,memory=128Mi
-
-kubectl describe deploy probe-demo | sed -n '/Limits:/,/Environment:/p'
-```
-
-### 11.3 HPA (concept)
-
-HPA needs metrics-server installed. On many clusters it exists already.
-
-Check:
-
-```bash
-kubectl top nodes || true
-kubectl top pods -A || true
-```
-
----
-
-## 12) Debugging & Incident Commands (Must-Memorize)
-
-> This section is your **real-time survival playbook**.
-
-### 12.1 “What’s broken?” — fastest triage
-
-```bash
-# cluster health
-kubectl get nodes -o wide
-kubectl get pods -A | head
-
-# sort by restarts
-kubectl get pods -A --sort-by='.status.containerStatuses[0].restartCount'
-
-# events (often reveals scheduling/image pull issues)
-kubectl get events -A --sort-by='.lastTimestamp' | tail -n 30
-
-# what changed recently?
-kubectl rollout history deploy/<name>
-```
-
-### 12.2 Pod stuck in Pending
-
-```bash
-kubectl describe pod <pod>
-# Look for: Insufficient cpu/memory, taints, node selectors, PVC pending
-
-kubectl get nodes
-kubectl describe node <node>
-kubectl get pvc -A
-```
-
-### 12.3 Pod CrashLoopBackOff
-
-```bash
-kubectl logs <pod> -c <container> --previous
-kubectl describe pod <pod>
-
-# quick shell
-kubectl exec -it <pod> -c <container> -- sh
-
-# copy files out
-kubectl cp <pod>:/path/in/container ./localfile
-```
-
-### 12.4 ImagePullBackOff
-
-```bash
-kubectl describe pod <pod>
-# verify image name, tag, registry auth secret
-
-kubectl get secret -A | grep -i docker || true
-```
-
-### 12.5 Service not reachable
-
-```bash
-kubectl get svc,ep -n <ns>
-kubectl describe svc <svc> -n <ns>
-
-# confirm endpoints exist
-kubectl get endpoints <svc> -n <ns> -o yaml
-
-# DNS check inside cluster
-kubectl run -it --rm net --image=busybox:1.36 --restart=Never -- sh
-nslookup <svc>.<ns>.svc.cluster.local
-wget -qO- http://<svc>.<ns>.svc.cluster.local:<port>
-exit
-```
-
-### 12.6 Node troubleshooting (on the node)
-
-```bash
-# kubelet status + logs
-sudo systemctl status kubelet --no-pager
-sudo journalctl -u kubelet -n 200 --no-pager
-
-# container runtime
-sudo systemctl status containerd --no-pager
-sudo journalctl -u containerd -n 200 --no-pager
-
-# ports
-sudo ss -lntp | egrep '6443|2379|2380|10250|10257|10259' || true
-
-# networking
+# routes, interfaces
 ip a
-ip route
-sudo iptables -S | head
+ip r
+
+# conntrack saturation
+conntrack -S | head
+
+# traffic capture
+tcpdump -i any port 53 -nn
+
+# iptables/nft rules (kube-proxy)
+iptables -t nat -S | head -n 50
+nft list ruleset | head -n 80
 ```
 
-### 12.7 Critical rollout commands
+✅ **Checkpoint:** You can prove if failure is DNS, Service endpoints, NetworkPolicy, or node routing.
+
+---
+
+## Module 4 — Storage: Stateful survival
+
+### 4.1 PVC stuck Pending
+```bash
+kubectl get pvc -A
+kubectl describe pvc -n <ns> <pvc>
+kubectl get sc -o wide
+kubectl get pv -o wide
+```
+
+### 4.2 StatefulSet pod stuck Terminating
+```bash
+kubectl get pod -n <ns> <pod> -o yaml | sed -n '/finalizers/,+10p'
+
+# emergency (use carefully):
+kubectl delete pod -n <ns> <pod> --grace-period=0 --force
+```
+
+✅ **Checkpoint:** You can find whether it’s storage class, provisioner, attach/detach, or filesystem.
+
+---
+
+## Module 5 — Runtime & Kubelet: CRI, logs, and node failures
+
+### 5.1 Kubelet and container runtime logs
+```bash
+# kubelet logs
+journalctl -u kubelet -f
+
+# container runtime (containerd example)
+journalctl -u containerd -f
+
+# CRI view
+crictl info
+crictl ps -a
+crictl logs <container-id>
+crictl inspect <container-id> | head
+```
+
+### 5.2 Common pod failures (fast fixes)
+
+**CrashLoopBackOff**
+```bash
+kubectl describe pod <pod> -n <ns>
+kubectl logs <pod> -n <ns> --previous --tail=200
+```
+
+**ImagePullBackOff**
+```bash
+kubectl describe pod <pod> -n <ns> | sed -n '/Events/,$p'
+crictl pull <image>
+```
+
+**OOMKilled**
+```bash
+kubectl describe pod <pod> -n <ns> | grep -i -E 'oom|killed' -n
+kubectl top pod -n <ns> <pod> --containers
+
+dmesg | tail -n 200 | grep -i -E 'killed process|oom'
+```
+
+✅ **Checkpoint:** You can distinguish app issues vs node/runtime issues quickly.
+
+---
+
+## Module 6 — Security Hardening: RBAC, Pod Security, Secrets
+
+### 6.1 RBAC: debug “Forbidden” like a pro
+```bash
+kubectl auth can-i get pods -n <ns> --as <user>
+kubectl auth can-i '*' '*' -n <ns> --as <user>
+
+kubectl get role,rolebinding -n <ns>
+kubectl get clusterrole,clusterrolebinding | head
+```
+
+### 6.2 Pod Security (baseline/restricted)
+- Run as non-root
+- Drop capabilities
+- Read-only root filesystem
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+```
+
+### 6.3 Secrets quick checks
+```bash
+kubectl get secrets -n <ns>
+# show keys only (avoid printing values in shared terminals)
+kubectl get secret -n <ns> <name> -o jsonpath='{.data}' | jq 'keys'
+```
+
+✅ **Checkpoint:** You can resolve RBAC errors and enforce safer pod defaults.
+
+---
+
+## Module 7 — Admission & Policies (Advanced “Platform Engineering”)
+
+### 7.1 Understand admission flow
+- ValidatingAdmissionPolicy / webhooks
+- Mutating webhooks (inject sidecars, defaults)
 
 ```bash
-# Pause/Resume rollouts
-kubectl rollout pause deploy/<name>
-kubectl rollout resume deploy/<name>
+kubectl get validatingwebhookconfigurations
+kubectl get mutatingwebhookconfigurations
 
-# Monitor rollout
-kubectl rollout status deploy/<name>
-
-# Roll back quickly
-kubectl rollout undo deploy/<name>
-
-# Restart deployment (forces new ReplicaSet)
-kubectl rollout restart deploy/<name>
+kubectl get --raw /api/v1 | head
 ```
 
-### 12.8 Debug without changing images (ephemeral debug pods)
+### 7.2 Quick policy testing pattern
+- Make a minimal manifest
+- Apply
+- Read rejection message
+- Locate webhook/policy and fix
 
+✅ **Checkpoint:** You can identify which admission controller blocked a request.
+
+---
+
+## Module 8 — Upgrades, Rollbacks, and Safe Change Management
+
+### 8.1 Safe rollout patterns
 ```bash
-# Create a temporary debugging pod in same namespace
-kubectl run -it --rm debug --image=nicolaka/netshoot --restart=Never -- bash
+kubectl rollout status deploy/<name> -n <ns>
+kubectl rollout history deploy/<name> -n <ns>
 
-# Or attach ephemeral container (if enabled)
-# kubectl debug -it <pod> --image=nicolaka/netshoot --target=<container>
+# quick rollback
+kubectl rollout undo deploy/<name> -n <ns>
+
+# pause/resume for controlled changes
+kubectl rollout pause deploy/<name> -n <ns>
+kubectl rollout resume deploy/<name> -n <ns>
 ```
 
-### 12.9 Powerful query patterns (JSONPath, wide, labels)
-
-```bash
-# Get pod node placement
-kubectl get pod -A -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name} {.spec.nodeName}{"\n"}{end}' | head
-
-# List images used
-kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\t"}{range .spec.containers[*]}{.image}{","}{end}{"\n"}{end}' | head
-
-# See resources quickly
-kubectl get pod <pod> -o yaml | sed -n '/resources:/,/securityContext:/p'
-```
-
-### 12.10 Node maintenance (cordon/drain)
-
+### 8.2 Node maintenance
 ```bash
 kubectl cordon <node>
-
-# Drain safely (ignore daemonsets, delete emptydir data)
-kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
-
+kubectl drain <node> --ignore-daemonsets --delete-local-data --force
 kubectl uncordon <node>
 ```
 
+✅ **Checkpoint:** You can perform maintenance without causing cascading outages.
 
-### 12.11 Real‑World Survival Commands (Quick Reference)
+---
 
-> **Use this during on‑call / production incidents.** These are the commands you’ll run again and again.
-> ⚠️ Destructive commands are marked **DANGER**.
+# 🚑 Production Incident Playbooks (Your Survival Kit)
 
-#### A) Context, namespace, and speed setup
+## Playbook A — “Service is DOWN” (fastest path)
 
+1) **Is the API healthy?**
 ```bash
-# see contexts / switch context
-kubectl config get-contexts
-kubectl config use-context <context>
-
-# set default namespace for your current context
-kubectl config set-context --current --namespace=<ns>
-
-# quick aliases (put in ~/.bashrc)
-alias k=kubectl
-alias kg='kubectl get'
-alias kd='kubectl describe'
-alias ka='kubectl apply -f'
-alias ke='kubectl explain'
+kubectl get --raw '/readyz?verbose'
 ```
 
-#### B) Find “what changed” and “what’s failing” fast
-
+2) **Which namespace/app?**
 ```bash
-# all namespaces overview
-kubectl get pods -A -o wide
-kubectl get deploy,ds,sts -A
-
-# show non-Running pods only
-kubectl get pods -A | egrep -v 'Running|Completed'
-
-# events: always check during incidents
-kubectl get events -A --sort-by=.lastTimestamp | tail -n 50
-
-# which pods restarted the most
-kubectl get pods -A --sort-by='.status.containerStatuses[0].restartCount' | tail -n 20
-
-# last applied / diff before applying
-kubectl diff -f <file.yaml> || true
+kubectl get pods -A -owide | egrep -i 'crash|error|pending|backoff|init'
 ```
 
-#### C) Live log tailing and quick attach
+3) **Service endpoints** (most common root cause)
+```bash
+kubectl get svc -n <ns>
+kubectl get ep -n <ns> <svc> -o wide
+```
+
+4) **Pod logs + events**
+```bash
+kubectl describe pod <pod> -n <ns> | sed -n '/Events/,$p'
+kubectl logs <pod> -n <ns> --all-containers --tail=200
+```
+
+5) **DNS check**
+```bash
+kubectl exec -it <pod> -n <ns> -- nslookup <svc>.<ns>.svc.cluster.local
+```
+
+6) **NetworkPolicy check**
+```bash
+kubectl get netpol -n <ns>
+```
+
+---
+
+## Playbook B — “Node NotReady / Pressure”
 
 ```bash
-# follow logs
-kubectl logs -f <pod> -c <container>
+kubectl describe node <node> | sed -n '/Conditions/,+30p'
 
-# get previous crash logs
-kubectl logs <pod> -c <container> --previous
+# quick node resource usage
+kubectl top node <node>
 
-# attach (useful for one-shot debugging)
-kubectl attach -it <pod> -c <container>
+# kubelet + runtime logs
+journalctl -u kubelet -n 200 --no-pager
+journalctl -u containerd -n 200 --no-pager
 
-# run a temporary debug pod with useful tools
+# disk pressure
+df -h
+sudo du -sh /var/lib/containerd/* 2>/dev/null | sort -h | tail
+```
+
+Fix patterns:
+- DiskPressure → clean images/logs, increase disk, tune eviction
+- MemoryPressure → lower limits/requests, scale, fix leak
+
+---
+
+## Playbook C — “Stuck Terminating” (pods/namespaces)
+
+```bash
+kubectl get pod -n <ns> <pod> -o yaml | sed -n '/finalizers/,+15p'
+
+# emergency only
+kubectl delete pod -n <ns> <pod> --grace-period=0 --force
+```
+
+---
+
+## Playbook D — “Control plane down”
+
+On control-plane node:
+```bash
+# kubeadm static pods
+ls -l /etc/kubernetes/manifests
+
+# check kubelet
+systemctl status kubelet
+journalctl -u kubelet -n 200 --no-pager
+
+# container runtime
+systemctl status containerd
+journalctl -u containerd -n 200 --no-pager
+
+# etcd health (TLS flags)
+ETCDCTL_API=3 etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  endpoint health
+```
+
+---
+
+# 🧪 Capstone Labs (Do these to become “Real-World Ready”)
+
+### Lab 1 — etcd Disaster Recovery (Snapshot + Restore)
+- Take snapshot
+- Stop apiserver, restore etcd, verify cluster state
+
+### Lab 2 — DNS Outage Simulation
+- Break CoreDNS
+- Identify impact and recovery steps
+
+### Lab 3 — NetworkPolicy Lockdown
+- Default deny
+- Allow only required paths
+
+### Lab 4 — Scheduler Constraints
+- Taints/tolerations, affinity, topology spread
+
+### Lab 5 — Production Rollout
+- Canary deployment, quick rollback, pause/resume
+
+### Lab 6 — Node Failure
+- Drain node, reschedule workloads, validate stateful recovery
+
+---
+
+# 🎯 Interview Drill (High-Value Questions)
+
+Practice answering these with diagrams + commands:
+
+1) Explain the request flow: **kubectl → apiserver → etcd → controllers → scheduler → kubelet**
+2) What happens when you create a Service? Where is it programmed?
+3) DNS resolution path inside a pod
+4) Why pods can talk across nodes (CNI) and how it can fail
+5) CrashLoopBackOff vs ImagePullBackOff vs Pending — root causes and commands
+6) RBAC: Role vs ClusterRole; RoleBinding vs ClusterRoleBinding
+7) etcd failure modes and recovery
+8) RollingUpdate strategies, readiness gates, and safe rollouts
+
+---
+
+# 🧷 Command Cheat Sheet (Copy/Paste)
+
+### Find what changed recently
+```bash
+kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 80
+kubectl rollout history deploy/<name> -n <ns>
+```
+
+### Find high restart pods
+```bash
+kubectl get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses!=null) | (.metadata.namespace+"/"+.metadata.name) as $p | [.status.containerStatuses[].restartCount] | max as $r | select($r>0) | $p+" restarts="+($r|tostring)'
+```
+
+### Quick debug pod (network tools)
+```bash
 kubectl run -it --rm netshoot --image=nicolaka/netshoot --restart=Never -- bash
 ```
 
-#### D) Emergency rollout control (deployments)
-
+### Ephemeral debug container (when allowed)
 ```bash
-# stop the bleeding
-kubectl rollout pause deploy/<name>
-
-# check rollout status
-kubectl rollout status deploy/<name>
-
-# rollback to previous revision
-kubectl rollout undo deploy/<name>
-
-# restart pods without changing image
-kubectl rollout restart deploy/<name>
-
-# scale down quickly
-kubectl scale deploy/<name> --replicas=0
-# scale back
-kubectl scale deploy/<name> --replicas=<n>
+kubectl debug -it pod/<pod> -n <ns> --image=nicolaka/netshoot --target=<container>
 ```
 
-#### E) Labels, selectors, and “show me exactly these”
-
+### Watch resources live
 ```bash
-# by label
-kubectl get pods -n <ns> -l app=<name> -o wide
-
-# show labels
-kubectl get pods -n <ns> --show-labels
-
-# edit labels (common fix for Service endpoints mismatch)
-kubectl label pod <pod> -n <ns> app=<name> --overwrite
-
-# field selector (e.g., pods on a node)
-kubectl get pods -A --field-selector spec.nodeName=<node> -o wide
-```
-
-#### F) Service and DNS debugging (classic outage)
-
-```bash
-kubectl get svc,ep -n <ns>
-kubectl describe svc <svc> -n <ns>
-
-# if endpoints are empty, check selectors + readiness
-kubectl get pods -n <ns> -l <selector> -o wide
-kubectl describe pod <pod> -n <ns>
-
-# DNS inside cluster
-kubectl run -it --rm dns --image=busybox:1.36 --restart=Never -- sh
-nslookup kubernetes.default
-nslookup <svc>.<ns>.svc.cluster.local
-wget -qO- http://<svc>.<ns>.svc.cluster.local:<port>
-exit
-```
-
-#### G) “It won’t delete!” — stuck resources and finalizers (**DANGER**)
-
-```bash
-# see finalizers
-kubectl get <type> <name> -n <ns> -o jsonpath='{.metadata.finalizers}'
-
-# DANGER: remove finalizers (use only when you understand impact)
-kubectl patch <type> <name> -n <ns> -p '{"metadata":{"finalizers":[]}}' --type=merge
-
-# DANGER: force delete a stuck pod
-kubectl delete pod <pod> -n <ns> --grace-period=0 --force
-
-# DANGER: stuck namespace cleanup
-kubectl get ns <ns> -o json | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/<ns>/finalize" -f -
-```
-
-> If you don’t have `jq`, install it: `sudo apt-get install -y jq`.
-
-#### H) Node-level triage (when kubectl is not enough)
-
-```bash
-# kubelet logs
-sudo journalctl -u kubelet -n 200 --no-pager
-
-# container runtime
-sudo systemctl status containerd --no-pager
-sudo journalctl -u containerd -n 200 --no-pager
-
-# install crictl (if missing)
-# sudo apt-get install -y cri-tools
-
-# list running containers in the node runtime
-sudo crictl ps
-sudo crictl pods
-
-# inspect and logs
-sudo crictl logs <container_id>
-sudo crictl inspect <container_id> | head
-```
-
-#### I) Control-plane / kubeadm “oh no” commands
-
-```bash
-# check certificate expiry (very common real-world issue)
-sudo kubeadm certs check-expiration
-
-# renew all certs (control-plane node)
-# sudo kubeadm certs renew all
-
-# see static pod manifests
-sudo ls -l /etc/kubernetes/manifests/
-
-# if a control-plane component is unhealthy, check kubelet + container logs
-sudo journalctl -u kubelet -n 200 --no-pager
-```
-
-#### J) Resource pressure & scheduling (why pods won't schedule)
-
-```bash
-# node pressure
-kubectl describe node <node> | egrep -i 'Pressure|Allocatable|Allocated|Taints' -n
-
-# if metrics-server exists
-kubectl top nodes || true
-kubectl top pods -A --sort-by=cpu || true
-kubectl top pods -A --sort-by=memory || true
-
-# see pod QoS class (helps understand eviction)
-kubectl get pod <pod> -n <ns> -o jsonpath='{.status.qosClass}' ; echo
+watch -n 1 'kubectl get pods -A -owide'
+watch -n 1 'kubectl top pods -A --containers | head -n 30'
 ```
 
 ---
 
-## 13) Control Plane Internals (Real “Hard Way” Understanding)
+# ✅ Next Steps (If you want me to generate more files)
 
-> This is where you become “dangerous” (in a good way). You’ll learn where K8s stores its truth and how components run.
-
-### 13.1 Control plane is static pods (kubeadm)
-
-On control-plane node:
-
-```bash
-ls -l /etc/kubernetes/manifests/
-# kube-apiserver.yaml
-# kube-controller-manager.yaml
-# kube-scheduler.yaml
-# etcd.yaml
-```
-
-These files are watched by kubelet; changing them changes control-plane behavior.
-
-### 13.2 Certificates and kubeconfigs
-
-```bash
-sudo ls -l /etc/kubernetes/pki/
-# apiserver.crt, apiserver.key, ca.crt, etc.
-
-sudo ls -l /etc/kubernetes/
-# admin.conf, controller-manager.conf, scheduler.conf, kubelet.conf
-```
-
-**Interview must-know:**
-- API Server is the front door
-- etcd stores cluster state
-- Controller Manager makes desired state real
-- Scheduler assigns pods to nodes
-- Kubelet runs pods on each node
-- kube-proxy programs service routing
-
-### 13.3 etcd health + snapshot (very real-world)
-
-etcd runs as a static pod. Find it:
-
-```bash
-kubectl -n kube-system get pods | grep etcd
-```
-
-Snapshot etcd (safe practice):
-
-```bash
-# run inside etcd container via kubectl exec
-ETCD_POD=$(kubectl -n kube-system get pod -l component=etcd -o jsonpath='{.items[0].metadata.name}')
-
-kubectl -n kube-system exec $ETCD_POD -- sh -c 'ETCDCTL_API=3 etcdctl version' || true
-
-# common kubeadm cert paths (inside the pod)
-kubectl -n kube-system exec $ETCD_POD -- sh -c '\
-ETCDCTL_API=3 etcdctl \\
-  --endpoints=https://127.0.0.1:2379 \\
-  --cacert=/etc/kubernetes/pki/etcd/ca.crt \\
-  --cert=/etc/kubernetes/pki/etcd/server.crt \\
-  --key=/etc/kubernetes/pki/etcd/server.key \\
-  snapshot save /var/lib/etcd/snapshot.db\
-ls -lh /var/lib/etcd/snapshot.db\
-'
-```
-
-Copy snapshot to your local machine:
-
-```bash
-kubectl -n kube-system cp ${ETCD_POD}:/var/lib/etcd/snapshot.db ./snapshot.db
-ls -lh snapshot.db
-```
+I can generate:
+- **30‑Day Advanced Kubernetes Plan (labs + tasks per day)**
+- **K8s Incident Runbooks (PDF)**
+- **Interview Q&A workbook**
+- **Cheat sheet** (kubectl / Linux / networking)
 
 ---
 
-## 14) Disaster Recovery Drills
-
-> Do these in a lab only.
-
-### 14.1 Break DNS and fix it
-
-1) Scale CoreDNS to 0:
-
-```bash
-kubectl -n kube-system scale deploy/coredns --replicas=0
-```
-
-2) Watch apps failing name resolution from a test pod.
-
-3) Restore:
-
-```bash
-kubectl -n kube-system scale deploy/coredns --replicas=2
-kubectl -n kube-system rollout status deploy/coredns
-```
-
-### 14.2 Simulate a bad rollout and recover fast
-
-```bash
-kubectl create deployment bad --image=nginx:1.25
-kubectl set image deployment/bad nginx=nginx:this-tag-does-not-exist
-kubectl rollout status deployment/bad || true
-
-# Investigate
-kubectl get pods -l app=bad
-kubectl describe pod -l app=bad | sed -n '/Events:/,$p'
-
-# Recover
-kubectl rollout undo deployment/bad
-kubectl rollout status deployment/bad
-```
-
-### 14.3 Node drain + uncordon drill
-
-```bash
-kubectl get nodes
-kubectl cordon k8s-w1
-kubectl drain k8s-w1 --ignore-daemonsets --delete-emptydir-data
-
-# confirm pods rescheduled
-kubectl get pods -A -o wide | head
-
-kubectl uncordon k8s-w1
-```
-
----
-
-## 15) Interview Drills (Fast Questions + Commands)
-
-### 15.1 “Explain flow” (say this confidently)
-
-1. `kubectl` talks to **API Server**
-2. API Server validates/admission, stores desired state in **etcd**
-3. **Scheduler** assigns Pods to Nodes
-4. **Kubelet** on node pulls images and runs containers via runtime
-5. **Controllers** keep reconciling desired vs current
-6. **kube-proxy** / CNI implement service routing + pod networking
-
-### 15.2 Must-know commands checklist
-
-```bash
-# Discover and learn
-kubectl api-resources
-kubectl explain deployment.spec.template.spec --recursive | less
-
-# Inspect
-kubectl get all -n <ns>
-kubectl describe <type> <name> -n <ns>
-kubectl get <type> <name> -o yaml
-
-# Troubleshoot
-kubectl logs <pod> -c <ctr> --previous
-kubectl get events -A --sort-by=.lastTimestamp | tail
-kubectl exec -it <pod> -- sh
-kubectl port-forward pod/<pod> 8080:80
-
-# Manage
-kubectl apply -f file.yaml
-kubectl delete -f file.yaml
-kubectl scale deploy/<name> --replicas=5
-kubectl rollout status deploy/<name>
-kubectl rollout undo deploy/<name>
-
-# Nodes
-kubectl cordon <node>
-kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
-kubectl uncordon <node>
-```
-
-### 15.3 Common failure patterns (and what you check)
-
-- **Pending** → resources, taints/tolerations, nodeSelectors, PVC
-- **CrashLoopBackOff** → app error, bad env/config, missing secret, probe killing it
-- **ImagePullBackOff** → wrong tag, auth, network/DNS to registry
-- **Service no endpoints** → selectors mismatch, pods not Ready
-- **DNS issues** → CoreDNS down, network policy, kube-proxy/CNI issues
-
----
-
-## Appendix A — Going “Full Hard Way” (Optional)
-
-If you want the *true* hard-way experience (manual certificates, kubeconfigs, etcd, apiserver, controller, scheduler, kubelet and networking), do this after you complete everything above:
-
-### A.1 What you’d build manually
-- PKI: CA, client/server certs
-- kubeconfigs: admin, kubelet, controller-manager, scheduler
-- etcd cluster
-- control-plane binaries as systemd services
-- worker components + CNI
-
-### A.2 Minimum “full hard way” exercises
-1. **Generate a CA + apiserver cert** with `openssl`
-2. **Run etcd** and verify with `etcdctl`
-3. **Run kube-apiserver** and hit `/healthz`
-4. **Create a namespace** via API call
-5. **Start kubelet** and run a static pod
-
-> Tip: Search for “Kubernetes The Hard Way” (Kelsey Hightower) and follow it when you have time. Use this README first to become productive quickly.
-
----
-
-## Cleanup
-
-```bash
-kubectl delete ns dev || true
-kubectl delete ds node-logger || true
-kubectl delete deploy web probe-demo bad || true
-kubectl delete svc web-svc || true
-kubectl delete cm app-config || true
-kubectl delete secret db-secret || true
-```
-
-To reset the cluster (lab only):
-
-```bash
-sudo kubeadm reset -f
-sudo rm -rf $HOME/.kube
-```
-
----
-
-## Next Steps (After You Finish This README)
-
-1. Learn **Helm** basics and deploy a chart
-2. Install and practice **Ingress Controller** + TLS
-3. Learn **NetworkPolicy** (Calico)
-4. Practice **multi-namespace RBAC**
-5. Practice **resource limits & eviction**
-6. Run a **stateful app** (Postgres) using PVC
-7. Build CI/CD manifests with **Kustomize**
-8. Learn **cluster upgrades** with kubeadm (very real-world)
-
----
-
-### If you want, tell me:
-- Your OS (Ubuntu/CentOS), VM specs, and whether you want **3 nodes** (HA-ish) or **2 nodes**.
-- I can generate a **Day-by-Day “hard way” schedule** + checklists + mini incident drills.
+## License / Notes
+Use this in your own lab environment first. Avoid printing secret values in shared terminals.

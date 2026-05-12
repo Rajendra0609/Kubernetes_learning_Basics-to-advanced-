@@ -1,0 +1,79 @@
+# ── 1. ClusterIP (default) ──────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-clusterip
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: webapp
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+---
+# ── 2. NodePort ──────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-nodeport
+spec:
+  type: NodePort
+  selector:
+    app: webapp
+  ports:
+  - protocol: TCP
+    port: 80           # Port on the ClusterIP
+    targetPort: 8080   # Port on the Pod
+    nodePort: 30080    # Port on every Node (30000-32767)
+---
+# ── 3. LoadBalancer ──────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-lb
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: LoadBalancer
+  selector:
+    app: webapp
+  ports:
+  - protocol: TCP
+    port: 443
+    targetPort: 8080
+  loadBalancerSourceRanges:
+  - "203.0.113.0/24"
+  - "10.0.0.0/8"
+---
+# ── 4. Headless (clusterIP: None) ────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-headless
+  namespace: databases
+spec:
+  clusterIP: None    # THIS makes it headless
+  selector:
+    app: mongodb
+  ports:
+  - port: 27017
+    targetPort: 27017
+---
+# ── 5. ExternalIP ────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-externalip
+spec:
+  type: ClusterIP
+  selector:
+    app: webapp
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+  externalIPs:
+  - 192.168.1.100
+  - 192.168.1.101

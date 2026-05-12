@@ -1,0 +1,159 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# LIFECYCLE HOOKS – MISSING FROM THE GUIDE
+# postStart: runs immediately AFTER container starts (async, not guaranteed order)
+# preStop: runs BEFORE container is stopped (synchronous, blocks SIGTERM)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Example 1: preStop for graceful shutdown ───────────────────────────────────
+# Pattern: give nginx time to drain in-flight requests before SIGTERM.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: graceful-shutdown
+spec:
+  terminationGracePeriodSeconds: 60   # Total time before SIGKILL
+  containers:
+  - name: nginx
+    image: nginx:1.25
+    ports:
+    - containerPort: 80
+
+    lifecycle:
+      postStart:
+        exec:
+          command:
+          - /bin/sh
+          - -c
+          - echo "Container started at $(date)" >> /tmp/lifecycle.log
+
+      preStop:
+        exec:
+          command:
+          - /bin/sh
+          - -c
+          # 1. Stop nginx from accepting new connections
+          # 2. Wait up to 30s for existing connections to drain
+          # 3. Then signal kubelet that preStop is done
+          - |
+            nginx -s quit
+            sleep 30
+
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 80
+      periodSeconds: 10
+---
+# ── Example 2: postStart HTTP call + preStop sleep ───────────────────────────
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lifecycle-http
+spec:
+  terminationGracePeriodSeconds: 45
+  containers:
+  - name: app
+    image: nginx:1.25
+
+    lifecycle:
+      postStart:
+        httpGet:
+          path: /register          # Notify service registry on startup
+          port: 8080
+          host: service-registry   # External host to call
+          scheme: HTTP
+
+      preStop:
+        httpGet:
+          path: /deregister        # Deregister from service registry on shutdown
+          port: 8080
+          host: service-registry
+          scheme: HTTP
+
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+---
+# ── Example 3: Spring Boot graceful shutdown (real-world Java) ────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-boot-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: spring-boot-app
+  template:
+    metadata:
+      labels:
+        app: spring-boot-app
+    spec:
+      terminationGracePeriodSeconds: 90
+
+      containers:
+      - name: app
+        image: mycompany/spring-boot-app:v1
+        ports:
+        - name: http
+          containerPort: 8080
+        - name: management
+          containerPort: 8081
+
+        env:
+        # Tell Spring Boot to wait for active requests during shutdown
+        - name: SPRING_LIFECYCLE_TIMEOUT-PER-SHUTDOWN-PHASE
+          value: "60s"
+
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - sh
+              - -c
+              # Small sleep to let kube-proxy remove pod from endpoints
+              # before Spring starts draining. Without this, requests
+              # can still arrive after SIGTERM is sent.
+              - sleep 10
+
+        startupProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: management
+          failureThreshold: 30
+          periodSeconds: 10
+
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: management
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: management
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"

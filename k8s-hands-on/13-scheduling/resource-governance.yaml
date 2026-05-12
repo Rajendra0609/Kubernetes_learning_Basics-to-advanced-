@@ -1,0 +1,51 @@
+# Namespace-level quota: total caps across all pods in the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: production-quota
+  namespace: production
+spec:
+  hard:
+    # Compute
+    requests.cpu: "10"
+    requests.memory: "20Gi"
+    limits.cpu: "20"
+    limits.memory: "40Gi"
+    # Object count limits
+    pods: "50"
+    services: "20"
+    services.loadbalancers: "3"
+    persistentvolumeclaims: "15"
+    secrets: "30"
+    configmaps: "30"
+---
+# LimitRange: per-container defaults and caps
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: container-limits
+  namespace: production
+spec:
+  limits:
+  - type: Container
+    default:           # Applied when a container has NO limits set
+      cpu: "200m"
+      memory: "256Mi"
+    defaultRequest:    # Applied when a container has NO requests set
+      cpu: "100m"
+      memory: "128Mi"
+    max:               # Hard ceiling per container
+      cpu: "2"
+      memory: "4Gi"
+    min:               # Minimum allowed
+      cpu: "50m"
+      memory: "64Mi"
+  - type: Pod
+    max:               # Hard ceiling per entire pod
+      cpu: "4"
+      memory: "8Gi"
+  - type: PersistentVolumeClaim
+    max:
+      storage: "50Gi"
+    min:
+      storage: "1Gi"

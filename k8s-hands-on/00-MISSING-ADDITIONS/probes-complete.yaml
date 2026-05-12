@@ -1,0 +1,237 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMPLETE PROBES REFERENCE
+# The guide only showed httpGet liveness + readiness probes.
+# This file covers ALL probe types and ALL probe mechanisms.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Probe 1: HTTP GET (most common for web services) ──────────────────────────
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-httpget
+spec:
+  containers:
+  - name: webapp
+    image: nginx:1.25
+    ports:
+    - containerPort: 80
+
+    # STARTUP PROBE – checked FIRST, before liveness/readiness kick in.
+    # Gives slow-starting containers time to boot without being killed.
+    # Once startup succeeds, liveness probe takes over.
+    startupProbe:
+      httpGet:
+        path: /healthz
+        port: 80
+        httpHeaders:
+        - name: X-Probe-Type
+          value: startup
+      failureThreshold: 30   # 30 attempts × 10s = 5 minutes to start
+      periodSeconds: 10
+      timeoutSeconds: 3
+
+    # LIVENESS PROBE – restarts the container if it fails.
+    # Use for: detecting deadlocks, infinite loops, unresponsive app.
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 80
+      initialDelaySeconds: 0   # startupProbe guards initial delay; set 0 here
+      periodSeconds: 15
+      timeoutSeconds: 3
+      failureThreshold: 3      # 3 failures → restart container
+      successThreshold: 1      # Must be 1 for liveness (k8s requirement)
+
+    # READINESS PROBE – removes pod from Service endpoints if it fails.
+    # Use for: detecting app under load, warming up caches, waiting for deps.
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3
+      successThreshold: 2      # Must pass 2 consecutive checks to be "ready"
+
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+---
+# ── Probe 2: EXEC (command-based) ─────────────────────────────────────────────
+# Used for databases, custom binaries, or when HTTP is not available.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-exec
+spec:
+  containers:
+  - name: postgres
+    image: postgres:15
+    env:
+    - name: POSTGRES_PASSWORD
+      value: "testpass"
+
+    startupProbe:
+      exec:
+        command:
+        - pg_isready
+        - -U
+        - postgres
+      failureThreshold: 20
+      periodSeconds: 10
+
+    livenessProbe:
+      exec:
+        command:
+        - pg_isready
+        - -U
+        - postgres
+      initialDelaySeconds: 0
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+    readinessProbe:
+      exec:
+        command:
+        - /bin/sh
+        - -c
+        # More complex check: DB is up AND accepting connections
+        - "pg_isready -U postgres && psql -U postgres -c 'SELECT 1'"
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+---
+# ── Probe 3: TCP SOCKET ───────────────────────────────────────────────────────
+# Checks if a TCP port is accepting connections.
+# Used for: databases, message brokers, services without HTTP.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-tcp
+spec:
+  containers:
+  - name: redis
+    image: redis:7
+
+    startupProbe:
+      tcpSocket:
+        port: 6379
+      failureThreshold: 10
+      periodSeconds: 5
+
+    livenessProbe:
+      tcpSocket:
+        port: 6379       # Just checks the TCP handshake succeeds
+      initialDelaySeconds: 0
+      periodSeconds: 20
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+    readinessProbe:
+      exec:
+        command:
+        - redis-cli
+        - ping         # Returns PONG if Redis is actually ready to serve
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      failureThreshold: 3
+
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+---
+# ── Probe 4: gRPC ─────────────────────────────────────────────────────────────
+# Native gRPC health check (k8s 1.24+).
+# Requires the app to implement grpc.health.v1.Health service.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-grpc
+spec:
+  containers:
+  - name: grpc-service
+    image: mycompany/grpc-service:v1
+
+    startupProbe:
+      grpc:
+        port: 50051
+        service: ""        # Empty = overall health; set service name for specific
+      failureThreshold: 20
+      periodSeconds: 10
+
+    livenessProbe:
+      grpc:
+        port: 50051
+        service: "liveness"
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+    readinessProbe:
+      grpc:
+        port: 50051
+        service: "readiness"
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "128Mi"
+      limits:
+        cpu: "1"
+        memory: "512Mi"
+---
+# ── Probe 5: Named ports ──────────────────────────────────────────────────────
+# Best practice: use named ports so changing port numbers doesn't break probes.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-named-ports
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
+    ports:
+    - name: http
+      containerPort: 80
+    - name: metrics
+      containerPort: 9090
+
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: http          # Reference by name, not number
+
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: http
+
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"

@@ -1,0 +1,54 @@
+# NOTE: VPA requires the VPA admission controller to be installed separately.
+# Install: https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler
+
+# ── VPA in "Off" mode – only provides recommendations, does NOT change pods ────
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: webapp-vpa-recommendation
+  namespace: production
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: webapp
+  updatePolicy:
+    updateMode: "Off"    # Off | Initial | Recreate | Auto
+  resourcePolicy:
+    containerPolicies:
+    - containerName: webapp
+      minAllowed:
+        cpu: "50m"
+        memory: "64Mi"
+      maxAllowed:
+        cpu: "2"
+        memory: "2Gi"
+      controlledResources: ["cpu", "memory"]
+---
+# ── VPA in "Auto" mode – updates running pods (causes restarts) ────────────────
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: webapp-vpa-auto
+  namespace: production
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: webapp
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+    - containerName: webapp
+      minAllowed:
+        cpu: "100m"
+        memory: "128Mi"
+      maxAllowed:
+        cpu: "4"
+        memory: "4Gi"
+
+# ── Check VPA recommendations ──────────────────────────────────────────────────
+# kubectl describe vpa webapp-vpa-recommendation -n production
+# Look for: Status > Recommendation > Container Recommendations
+# Lower Bound, Upper Bound, Target, Uncapped Target

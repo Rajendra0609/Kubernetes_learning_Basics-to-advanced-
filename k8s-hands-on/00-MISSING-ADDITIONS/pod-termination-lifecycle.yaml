@@ -1,0 +1,113 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# POD DISRUPTION & TERMINATION LIFECYCLE – MISSING FROM GUIDE
+# Covers: terminationGracePeriodSeconds, preStop timing, SIGTERM vs SIGKILL,
+#         and the correct sequence Kubernetes uses to stop a pod.
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# KUBERNETES POD TERMINATION SEQUENCE:
+#
+# 1. User/controller issues DELETE on the pod
+# 2. Pod enters "Terminating" state; kube-proxy removes it from Service endpoints
+# 3. preStop hook executes (if defined) – synchronous, blocks SIGTERM
+# 4. SIGTERM is sent to PID 1 in each container
+# 5. terminationGracePeriodSeconds countdown begins
+# 6. If container is still running after grace period → SIGKILL
+# 7. Pod is removed from etcd
+#
+# KEY INSIGHT: kube-proxy endpoint removal is NOT instant.
+# Always add a `sleep 5` in preStop to let endpoints propagate,
+# even if your app handles SIGTERM perfectly.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Node.js app with correct shutdown sequence ─────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nodejs-api
+  namespace: production
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nodejs-api
+  template:
+    metadata:
+      labels:
+        app: nodejs-api
+    spec:
+      terminationGracePeriodSeconds: 60
+
+      containers:
+      - name: api
+        image: node:20-alpine
+        ports:
+        - name: http
+          containerPort: 3000
+
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              # Step 1: Sleep to let kube-proxy propagate endpoint removal
+              # Step 2: App handles SIGTERM to drain active connections
+              - sleep 10
+
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          failureThreshold: 20
+          periodSeconds: 5
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+---
+# ── Correct: terminationGracePeriodSeconds > preStop duration + drain time ────
+# If preStop takes 30s and app drains in 20s, set grace period to at least 60s.
+# Formula: terminationGracePeriodSeconds = preStop_duration + app_drain_time + buffer
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: correct-grace-period
+spec:
+  terminationGracePeriodSeconds: 90   # preStop(10s) + drain(60s) + buffer(20s)
+  containers:
+  - name: app
+    image: nginx:1.25
+    lifecycle:
+      preStop:
+        exec:
+          command: ["sleep", "10"]   # Allow endpoints to propagate
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"

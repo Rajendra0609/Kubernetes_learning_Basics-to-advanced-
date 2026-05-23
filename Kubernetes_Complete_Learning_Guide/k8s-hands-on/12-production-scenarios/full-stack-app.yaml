@@ -1,0 +1,208 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: databases
+type: Opaque
+data:
+  username: YWRtaW4=       # admin
+  password: cGFzc3dvcmQ=   # password (use a strong password in production)
+---
+# ── DATABASE TIER ─────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: databases
+spec:
+  replicas: 1
+  serviceName: postgres
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15
+        env:
+        - name: POSTGRES_DB
+          value: "appdb"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        ports:
+        - containerPort: 5432
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "admin", "-d", "appdb"]
+          initialDelaySeconds: 30
+          periodSeconds: 20
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "admin", "-d", "appdb"]
+          initialDelaySeconds: 10
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: databases
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+---
+# ── BACKEND TIER ──────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-sa
+  namespace: backend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-server
+  namespace: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api-server
+  template:
+    metadata:
+      labels:
+        app: api-server
+        tier: backend
+    spec:
+      serviceAccountName: api-sa
+      containers:
+      - name: api
+        image: mycompany/api:1.0
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOST
+          value: "postgres.databases.svc.cluster.local"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: password
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-server
+  namespace: backend
+spec:
+  selector:
+    app: api-server
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+# ── FRONTEND TIER ─────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: mycompany/frontend:1.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: API_URL
+          value: "http://api-server.backend.svc.cluster.local:8080"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: frontend
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 3000

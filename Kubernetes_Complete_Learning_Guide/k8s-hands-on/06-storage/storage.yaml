@@ -1,0 +1,73 @@
+# ── StorageClass – dynamic provisioning ──────────────────────────────────────
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: rancher.io/local-path   # or kubernetes.io/aws-ebs, etc.
+reclaimPolicy: Retain
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+---
+# ── PersistentVolume – static (for NFS/local storage) ────────────────────────
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv-node1
+  labels:
+    type: local
+spec:
+  storageClassName: fast-ssd
+  capacity:
+    storage: 20Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  local:
+    path: /mnt/disks/ssd1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values: [worker-node-1]
+---
+# ── PersistentVolumeClaim ─────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-data-pvc
+  namespace: default
+spec:
+  storageClassName: fast-ssd
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+# ── Pod using the PVC ─────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-with-storage
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
+    volumeMounts:
+    - name: app-data
+      mountPath: /var/app/data
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+  volumes:
+  - name: app-data
+    persistentVolumeClaim:
+      claimName: app-data-pvc

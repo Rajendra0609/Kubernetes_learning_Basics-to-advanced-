@@ -1,0 +1,150 @@
+# ============================================================
+# Istio Service Mesh — Traffic Management, mTLS, Observability
+# ============================================================
+# Install Istio:
+#   curl -L https://istio.io/downloadIstio | sh -
+#   istioctl install --set profile=production -y
+#   kubectl label namespace production istio-injection=enabled
+# ============================================================
+
+# ── VirtualService — fine-grained traffic routing ─────────────
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: webapp-vs
+  namespace: production
+spec:
+  hosts: [webapp]
+  http:
+  # ── Canary: 10% traffic to v2 ──────────────────────────────
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"     # Header-based routing for testers
+    route:
+    - destination:
+        host: webapp
+        subset: v2
+  - route:
+    - destination:
+        host: webapp
+        subset: v1
+      weight: 90
+    - destination:
+        host: webapp
+        subset: v2
+      weight: 10
+    timeout: 5s
+    retries:
+      attempts: 3
+      perTryTimeout: 2s
+      retryOn: gateway-error,connect-failure,retriable-4xx
+    fault:               # Chaos engineering — inject faults to test resilience
+      delay:
+        percentage:
+          value: 0.1     # Inject 100ms delay for 0.1% of requests
+        fixedDelay: 100ms
+---
+# ── DestinationRule — defines subsets and load balancing ──────
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: webapp-dr
+  namespace: production
+spec:
+  host: webapp
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        h2UpgradePolicy: UPGRADE
+        idleTimeout: 10m
+    loadBalancer:
+      simple: LEAST_CONN
+    outlierDetection:          # Circuit breaker
+      consecutive5xxErrors: 5
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+    trafficPolicy:
+      loadBalancer:
+        simple: ROUND_ROBIN
+  - name: v2
+    labels:
+      version: v2
+---
+# ── PeerAuthentication — enforce mTLS between services ────────
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: production
+spec:
+  mtls:
+    mode: STRICT     # ALL traffic within namespace must use mTLS
+---
+# ── AuthorizationPolicy — service-level RBAC ─────────────────
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: frontend-to-backend
+  namespace: production
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/production/sa/frontend-sa"]
+    to:
+    - operation:
+        methods: [GET, POST]
+        paths: ["/api/*"]
+---
+# ── Gateway — expose services externally via Istio ingress ────
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: webapp-gateway
+  namespace: production
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: webapp-tls-cert
+    hosts: [webapp.example.com]
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    tls:
+      httpsRedirect: true
+    hosts: [webapp.example.com]
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: webapp-gateway-vs
+  namespace: production
+spec:
+  hosts: [webapp.example.com]
+  gateways: [webapp-gateway]
+  http:
+  - route:
+    - destination:
+        host: webapp
+        port:
+          number: 80

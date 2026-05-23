@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-spread
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: webapp-spread
+  template:
+    metadata:
+      labels:
+        app: webapp-spread
+    spec:
+      topologySpreadConstraints:
+      # Constraint 1: spread evenly across nodes (hostname)
+      - maxSkew: 1                            # Max difference between most/least loaded domain
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule      # Hard: block scheduling if constraint violated
+        labelSelector:
+          matchLabels:
+            app: webapp-spread
+
+      # Constraint 2: spread across availability zones (soft)
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway    # Soft: try but don't block
+        labelSelector:
+          matchLabels:
+            app: webapp-spread
+
+      containers:
+      - name: webapp
+        image: nginx:1.25
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"

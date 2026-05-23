@@ -1,0 +1,89 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: critical-production
+value: 1000000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: "Mission-critical production services. Preempts all others."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+value: 100000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: "Important services. Preempts default and low priority."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: default-priority
+value: 1000
+globalDefault: true    # All pods without a priorityClassName get this
+preemptionPolicy: PreemptLowerPriority
+description: "Default for all workloads unless specified."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority-batch
+value: 100
+globalDefault: false
+preemptionPolicy: Never    # Will not preempt others – just waits
+description: "Batch/background jobs. Yields resources when cluster is busy."
+---
+# Payment service with critical priority
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      priorityClassName: critical-production
+      containers:
+      - name: payment
+        image: my-payment-service:v2
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+---
+# Batch job with low priority – gets preempted when cluster is busy
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: report-generator
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: report-generator
+  template:
+    metadata:
+      labels:
+        app: report-generator
+    spec:
+      priorityClassName: low-priority-batch
+      containers:
+      - name: reporter
+        image: my-reporter:v1
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"

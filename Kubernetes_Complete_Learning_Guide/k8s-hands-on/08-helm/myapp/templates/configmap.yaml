@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "myapp.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "myapp.labels" . | nindent 4 }}
+data:
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  MAX_CONNECTIONS: {{ .Values.config.maxConnections | quote }}
+  DB_HOST: {{ .Values.config.dbHost | quote }}
+  DB_PORT: {{ .Values.config.dbPort | quote }}
+  DB_NAME: {{ .Values.config.dbName | quote }}
+  ENV: {{ .Values.env | quote }}

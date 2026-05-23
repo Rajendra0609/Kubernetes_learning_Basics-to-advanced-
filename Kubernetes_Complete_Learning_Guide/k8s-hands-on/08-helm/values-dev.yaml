@@ -1,0 +1,19 @@
+# Development overrides
+replicaCount: 1
+env: development
+autoscaling:
+  enabled: false
+ingress:
+  enabled: true
+  hosts:
+    - host: myapp.dev.local
+      paths:
+        - path: /
+          pathType: Prefix
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

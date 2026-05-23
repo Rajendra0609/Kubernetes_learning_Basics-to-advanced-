@@ -1,0 +1,113 @@
+# ============================================================
+# GitOps with ArgoCD
+# ============================================================
+# Install ArgoCD:
+#   kubectl create namespace argocd
+#   kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+#
+# Access UI:
+#   kubectl port-forward svc/argocd-server -n argocd 8080:443
+#   Initial password: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+# ============================================================
+
+# ── ArgoCD Application — deploy from Git repo ─────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-production
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io   # cascade-delete app resources on removal
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/yourorg/k8s-manifests.git
+    targetRevision: HEAD          # track the main branch
+    path: environments/production # subfolder within the repo
+    # For Helm chart repos:
+    # helm:
+    #   valueFiles: [values-prod.yaml]
+    #   parameters:
+    #   - name: image.tag
+    #     value: "1.2.3"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+  syncPolicy:
+    automated:
+      prune: true          # delete resources removed from Git
+      selfHeal: true       # revert manual kubectl changes
+      allowEmpty: false    # never delete everything if Git is empty
+    syncOptions:
+    - Validate=true
+    - CreateNamespace=true
+    - PrunePropagationPolicy=foreground
+    - ApplyOutOfSyncOnly=true    # only apply changed resources (faster)
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10
+---
+# ── ArgoCD AppProject — team isolation and RBAC ───────────────
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: team-backend
+  namespace: argocd
+spec:
+  description: Backend team's project
+  sourceRepos:
+  - https://github.com/yourorg/backend-services.git
+  - https://charts.bitnami.com/bitnami
+  destinations:
+  - namespace: production
+    server: https://kubernetes.default.svc
+  - namespace: staging
+    server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+  - group: ""
+    kind: Namespace
+  namespaceResourceBlacklist:
+  - group: ""
+    kind: ResourceQuota    # prevent teams from modifying quotas
+  roles:
+  - name: developer
+    description: Read-only access for developers
+    policies:
+    - p, proj:team-backend:developer, applications, get, team-backend/*, allow
+    - p, proj:team-backend:developer, applications, sync, team-backend/*, allow
+  - name: devops
+    description: Full access for DevOps
+    policies:
+    - p, proj:team-backend:devops, applications, *, team-backend/*, allow
+---
+# ── Image Updater Annotation — auto-update image tags ─────────
+# Install ArgoCD Image Updater:
+#   kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/stable/manifests/install.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: myapp-staging
+  namespace: argocd
+  annotations:
+    # Automatically update image when a new tag is pushed matching semver
+    argocd-image-updater.argoproj.io/image-list: myapp=myrepo/myapp
+    argocd-image-updater.argoproj.io/myapp.update-strategy: semver
+    argocd-image-updater.argoproj.io/myapp.allow-tags: regexp:^[0-9]+\.[0-9]+\.[0-9]+$
+    argocd-image-updater.argoproj.io/write-back-method: git   # commit back to Git!
+spec:
+  project: team-backend
+  source:
+    repoURL: https://github.com/yourorg/k8s-manifests.git
+    targetRevision: HEAD
+    path: environments/staging
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

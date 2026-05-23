@@ -1,0 +1,169 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# INIT CONTAINERS – ADVANCED PATTERNS
+# The guide showed only a single basic init container.
+# This file covers real production init container patterns.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Pattern 1: Wait for dependency before starting main app ───────────────────
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-wait-for-db
+spec:
+  initContainers:
+  # Init 1: wait until Postgres is accepting connections
+  - name: wait-for-postgres
+    image: busybox:1.35
+    command:
+    - sh
+    - -c
+    - |
+      echo "Waiting for Postgres..."
+      until nc -z postgres-service 5432; do
+        echo "Postgres not ready, retrying in 3s..."
+        sleep 3
+      done
+      echo "Postgres is ready!"
+
+  # Init 2: run DB migrations before the app starts
+  - name: run-migrations
+    image: mycompany/migrations:v1
+    command: ["./migrate", "--direction", "up"]
+    env:
+    - name: DB_URL
+      value: "postgres://postgres-service:5432/appdb"
+    - name: DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: postgres-secret
+          key: password
+
+  # Init 3: download config from S3
+  - name: fetch-config
+    image: amazon/aws-cli:2.13
+    command:
+    - sh
+    - -c
+    - aws s3 cp s3://my-bucket/app-config.json /shared/config.json
+    volumeMounts:
+    - name: shared-config
+      mountPath: /shared
+    env:
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: aws-secret
+          key: access-key
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: aws-secret
+          key: secret-key
+
+  containers:
+  - name: app
+    image: mycompany/app:v1
+    volumeMounts:
+    - name: shared-config
+      mountPath: /etc/app
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "512Mi"
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 10
+
+  volumes:
+  - name: shared-config
+    emptyDir: {}
+---
+# ── Pattern 2: Permission fixer init container ─────────────────────────────────
+# When a PVC is mounted, files may have wrong ownership.
+# This init container fixes permissions before the app runs.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-fix-permissions
+spec:
+  initContainers:
+  - name: fix-permissions
+    image: busybox:1.35
+    command:
+    - sh
+    - -c
+    - |
+      chown -R 1000:1000 /data
+      chmod -R 755 /data
+      echo "Permissions fixed"
+    securityContext:
+      runAsUser: 0    # Must run as root to chown
+    volumeMounts:
+    - name: data-volume
+      mountPath: /data
+
+  containers:
+  - name: app
+    image: mycompany/app:v1
+    securityContext:
+      runAsUser: 1000
+      runAsNonRoot: true
+    volumeMounts:
+    - name: data-volume
+      mountPath: /data
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+  volumes:
+  - name: data-volume
+    persistentVolumeClaim:
+      claimName: app-pvc
+---
+# ── Pattern 3: Clone git repo into shared volume ──────────────────────────────
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-git-clone
+spec:
+  initContainers:
+  - name: clone-repo
+    image: alpine/git:latest
+    command:
+    - git
+    - clone
+    - --depth=1
+    - https://github.com/myorg/app-config.git
+    - /config
+    volumeMounts:
+    - name: config-volume
+      mountPath: /config
+
+  containers:
+  - name: app
+    image: nginx:1.25
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/nginx/conf.d
+      readOnly: true
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+
+  volumes:
+  - name: config-volume
+    emptyDir: {}

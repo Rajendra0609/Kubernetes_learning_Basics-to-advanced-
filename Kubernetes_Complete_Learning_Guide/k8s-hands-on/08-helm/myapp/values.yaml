@@ -1,0 +1,112 @@
+# ============================================================
+# values.yaml — Default configuration for myapp Helm chart
+# Override with: helm install myapp . -f my-values.yaml
+# or:            helm install myapp . --set image.tag=2.0
+# ============================================================
+
+replicaCount: 2
+
+image:
+  repository: nginx
+  tag: "1.25"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9090"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 2000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: myapp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: myapp-tls
+      hosts: [myapp.example.com]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [myapp]
+          topologyKey: kubernetes.io/hostname
+
+# App-specific config
+config:
+  logLevel: INFO
+  maxConnections: 100
+  dbHost: "postgres-service"
+  dbPort: "5432"
+  dbName: "myapp"
+
+# Liveness/readiness probe config
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 15
+    periodSeconds: 20
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+redis:
+  enabled: false
+  auth:
+    enabled: true
+
+# Environment-specific overrides (used in values-prod.yaml, values-dev.yaml)
+env: development

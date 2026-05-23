@@ -1,0 +1,261 @@
+# ============================================================
+# EFK Stack — Elasticsearch + Fluentd + Kibana
+# ============================================================
+# Install via ECK (Elastic Cloud on Kubernetes) Operator:
+#   kubectl create -f https://download.elastic.co/downloads/eck/2.11.1/crds.yaml
+#   kubectl apply -f https://download.elastic.co/downloads/eck/2.11.1/operator.yaml
+# ============================================================
+
+# ── Elasticsearch Cluster ────────────────────────────────────
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: logging
+  namespace: logging
+spec:
+  version: 8.12.0
+  nodeSets:
+  - name: master
+    count: 3
+    config:
+      node.roles: ["master"]
+      xpack.security.enabled: true
+    podTemplate:
+      spec:
+        containers:
+        - name: elasticsearch
+          resources:
+            requests: { cpu: 500m, memory: 2Gi }
+            limits:   { cpu: 2,    memory: 4Gi }
+          env:
+          - name: ES_JAVA_OPTS
+            value: "-Xms1g -Xmx1g"
+    volumeClaimTemplates:
+    - metadata:
+        name: elasticsearch-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 10Gi
+  - name: data
+    count: 3
+    config:
+      node.roles: ["data", "ingest"]
+    podTemplate:
+      spec:
+        containers:
+        - name: elasticsearch
+          resources:
+            requests: { cpu: 1, memory: 4Gi }
+            limits:   { cpu: 4, memory: 8Gi }
+          env:
+          - name: ES_JAVA_OPTS
+            value: "-Xms2g -Xmx2g"
+    volumeClaimTemplates:
+    - metadata:
+        name: elasticsearch-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 100Gi
+---
+# ── Kibana ────────────────────────────────────────────────────
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: logging
+  namespace: logging
+spec:
+  version: 8.12.0
+  count: 1
+  elasticsearchRef:
+    name: logging
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: false
+  podTemplate:
+    spec:
+      containers:
+      - name: kibana
+        resources:
+          requests: { cpu: 500m, memory: 1Gi }
+          limits:   { cpu: 1,    memory: 2Gi }
+---
+# ── Fluentd DaemonSet — collect logs from every node ─────────
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: logging
+  labels:
+    app: fluentd
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  template:
+    metadata:
+      labels:
+        app: fluentd
+    spec:
+      serviceAccountName: fluentd
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        effect: NoSchedule
+      containers:
+      - name: fluentd
+        image: fluent/fluentd-kubernetes-daemonset:v1.16-debian-elasticsearch8-1
+        env:
+        - name: FLUENT_ELASTICSEARCH_HOST
+          value: "logging-es-http.logging.svc.cluster.local"
+        - name: FLUENT_ELASTICSEARCH_PORT
+          value: "9200"
+        - name: FLUENT_ELASTICSEARCH_SCHEME
+          value: "https"
+        - name: FLUENT_ELASTICSEARCH_SSL_VERIFY
+          value: "false"
+        - name: FLUENT_ELASTICSEARCH_USER
+          value: "elastic"
+        - name: FLUENT_ELASTICSEARCH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: logging-es-elastic-user
+              key: elastic
+        - name: FLUENT_CONTAINER_TAIL_EXCLUDE_PATH
+          value: /var/log/containers/fluentd-*
+        - name: FLUENT_SYSTEMD_CONF
+          value: disable
+        resources:
+          requests: { cpu: 200m, memory: 512Mi }
+          limits:   { cpu: 500m, memory: 1Gi }
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: fluentd-config
+          mountPath: /fluentd/etc/conf.d
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: fluentd-config
+        configMap:
+          name: fluentd-config
+---
+# ── Fluentd Configuration ─────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: logging
+data:
+  kubernetes.conf: |
+    <source>
+      @type tail
+      @id in_tail_container_logs
+      path /var/log/containers/*.log
+      pos_file /var/log/fluentd-containers.log.pos
+      tag kubernetes.*
+      read_from_head true
+      <parse>
+        @type multi_format
+        <pattern>
+          format json
+          time_key time
+          time_type string
+          time_format "%Y-%m-%dT%H:%M:%S.%NZ"
+          keep_time_key false
+        </pattern>
+        <pattern>
+          format /^(?<time>.+) (?<stream>stdout|stderr)( (?<logtag>.))? (?<log>.*)$/
+          time_format '%Y-%m-%dT%H:%M:%S.%N%:z'
+          keep_time_key false
+        </pattern>
+      </parse>
+    </source>
+
+    <filter kubernetes.**>
+      @type kubernetes_metadata
+      @id filter_kube_metadata
+      skip_labels false
+      skip_container_metadata false
+      skip_master_url false
+      skip_namespace_metadata false
+      watch true
+    </filter>
+
+    # Drop noisy health-check logs
+    <filter kubernetes.**>
+      @type grep
+      <exclude>
+        key log
+        pattern /GET \/healthz|GET \/readyz|kube-probe/
+      </exclude>
+    </filter>
+
+    <match kubernetes.**>
+      @type elasticsearch
+      @id out_es
+      @log_level info
+      include_tag_key true
+      host "#{ENV['FLUENT_ELASTICSEARCH_HOST']}"
+      port "#{ENV['FLUENT_ELASTICSEARCH_PORT']}"
+      scheme "#{ENV['FLUENT_ELASTICSEARCH_SCHEME']}"
+      ssl_verify "#{ENV['FLUENT_ELASTICSEARCH_SSL_VERIFY']}"
+      user "#{ENV['FLUENT_ELASTICSEARCH_USER']}"
+      password "#{ENV['FLUENT_ELASTICSEARCH_PASSWORD']}"
+      logstash_format true
+      logstash_prefix k8s
+      <buffer>
+        @type file
+        path /var/log/fluentd-buffers/kubernetes.system.buffer
+        flush_mode interval
+        retry_type exponential_backoff
+        flush_interval 5s
+        retry_forever false
+        retry_max_interval 30
+        chunk_limit_size 2M
+        queue_limit_length 8
+        overflow_action block
+      </buffer>
+    </match>
+---
+# ── RBAC for Fluentd ─────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluentd
+  namespace: logging
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluentd
+rules:
+- apiGroups: [""]
+  resources: [pods, namespaces]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluentd
+roleRef:
+  kind: ClusterRole
+  name: fluentd
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: fluentd
+  namespace: logging

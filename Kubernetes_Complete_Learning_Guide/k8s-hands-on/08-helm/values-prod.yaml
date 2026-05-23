@@ -1,0 +1,20 @@
+# Production overrides — use with:
+# helm upgrade --install myapp ./myapp -f values-prod.yaml -n production
+replicaCount: 5
+env: production
+image:
+  tag: "1.25.3"  # pin exact version in prod
+autoscaling:
+  minReplicas: 5
+  maxReplicas: 50
+ingress:
+  enabled: true
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2
+    memory: 1Gi
+redis:
+  enabled: true

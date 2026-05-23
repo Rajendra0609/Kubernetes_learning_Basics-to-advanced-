@@ -1,0 +1,46 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-policy
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+  - Ingress
+  - Egress
+
+  # ── INGRESS RULES ──────────────────────────────────────────────────────────
+  ingress:
+  - from:
+    # Rule A: allow from pods labelled tier=frontend in same namespace
+    - podSelector:
+        matchLabels:
+          tier: frontend
+    # Rule B: allow from monitoring namespace
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+
+  # ── EGRESS RULES ───────────────────────────────────────────────────────────
+  egress:
+  # Rule 1: allow to database namespace on port 5432
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: databases
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Rule 2: allow DNS – CRITICAL, always include or pods cannot resolve names
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53

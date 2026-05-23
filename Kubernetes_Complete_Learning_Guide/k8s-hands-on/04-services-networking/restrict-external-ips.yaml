@@ -1,0 +1,74 @@
+# ── Layer 1 – LoadBalancer: Restrict Source IPs ──────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-lb-restricted
+spec:
+  type: LoadBalancer
+  selector:
+    app: webapp
+  ports:
+  - port: 443
+    targetPort: 8080
+  loadBalancerSourceRanges:
+  - "203.0.113.0/24"       # Your office CIDR
+  - "198.51.100.50/32"     # A specific trusted IP
+---
+# ── Layer 2 – NetworkPolicy: Block/Allow by IP Block ─────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-external-ips
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: webapp
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # ALLOW traffic from trusted CIDR only
+  - from:
+    - ipBlock:
+        cidr: 203.0.113.0/24    # Allowed range
+        except:
+        - 203.0.113.50/32       # But block this specific IP
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # ALLOW egress to a specific third-party API server
+  - to:
+    - ipBlock:
+        cidr: 198.51.100.0/24
+    ports:
+    - protocol: TCP
+      port: 443
+  # Always allow DNS
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+---
+# ── Layer 3 – NGINX Ingress: HTTP-Level Allowlist ────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress-restricted
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: "203.0.113.0/24,198.51.100.50/32"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: app.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: webapp-clusterip
+            port:
+              number: 80

@@ -1,0 +1,73 @@
+# ── Toleration Examples ────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Pod
+metadata:
+  name: prod-pod
+spec:
+  tolerations:
+  # Exact match toleration – must match key, operator, value, effect
+  - key: "env"
+    operator: "Equal"
+    value: "production"
+    effect: "NoSchedule"
+
+  # Exists toleration – matches any value for the key
+  - key: "dedicated"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+  # Tolerate NoExecute with a time limit (pod evicted after 300s)
+  - key: "node.kubernetes.io/not-ready"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 300
+
+  containers:
+  - name: app
+    image: nginx:1.25
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "64Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+---
+# ── Real-world: GPU node reserved for ML workloads ────────────────────────────
+# Step 1: taint the GPU node
+#   kubectl taint nodes gpu-node-1 nvidia.com/gpu=present:NoSchedule
+# Step 2: ML deployment with GPU toleration + resource request
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-training
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ml-training
+  template:
+    metadata:
+      labels:
+        app: ml-training
+    spec:
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Equal"
+        value: "present"
+        effect: "NoSchedule"
+      nodeSelector:
+        accelerator: gpu   # Also pin to GPU nodes explicitly
+      containers:
+      - name: trainer
+        image: tensorflow/tensorflow:latest-gpu
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+            nvidia.com/gpu: "1"

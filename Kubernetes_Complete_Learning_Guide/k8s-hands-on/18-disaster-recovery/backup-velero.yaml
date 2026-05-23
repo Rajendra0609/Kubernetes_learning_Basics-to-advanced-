@@ -1,0 +1,86 @@
+# ============================================================
+# Disaster Recovery — Velero Backup & Restore
+# ============================================================
+# Velero backs up K8s objects + persistent volumes to object storage.
+# Install:
+#   velero install \
+#     --provider aws \
+#     --plugins velero/velero-plugin-for-aws:v1.9.0 \
+#     --bucket my-velero-backups \
+#     --backup-location-config region=ap-south-1 \
+#     --snapshot-location-config region=ap-south-1 \
+#     --secret-file ./credentials-velero \
+#     --use-node-agent \          # enables PV backup via restic/kopia
+#     --use-volume-snapshots=true
+# ============================================================
+
+# ── Daily scheduled backup ────────────────────────────────────
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: daily-production-backup
+  namespace: velero
+spec:
+  schedule: "0 2 * * *"       # 2 AM UTC daily
+  template:
+    includedNamespaces:
+    - production
+    - staging
+    excludedResources:
+    - events
+    - events.events.k8s.io
+    storageLocation: default
+    volumeSnapshotLocations:
+    - default
+    ttl: 720h                  # keep backups for 30 days
+    snapshotVolumes: true
+    defaultVolumesToFsBackup: false   # use CSI snapshots, not restic
+    labelSelector:
+      matchExpressions:
+      - key: backup
+        operator: NotIn
+        values: [skip]         # skip pods labeled backup=skip
+---
+# ── Backup all namespaces weekly (full cluster backup) ────────
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: weekly-full-cluster-backup
+  namespace: velero
+spec:
+  schedule: "0 1 * * 0"       # 1 AM UTC every Sunday
+  template:
+    includedNamespaces: ["*"]
+    excludedNamespaces:
+    - velero
+    - kube-system
+    storageLocation: default
+    ttl: 2160h                 # keep 90 days
+    snapshotVolumes: true
+---
+# ── BackupStorageLocation (secondary region for DR) ──────────
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  name: secondary-region
+  namespace: velero
+spec:
+  provider: aws
+  objectStorage:
+    bucket: my-velero-backups-dr
+    prefix: secondary
+  config:
+    region: eu-west-1          # different region for true DR
+  credential:
+    name: velero-aws-credentials
+    key: cloud
+---
+# ── Restore from backup (run manually during DR) ──────────────
+# velero restore create --from-backup daily-production-backup-20240115120000
+# velero restore describe <restore-name> --details
+# velero restore logs <restore-name>
+#
+# Restore only specific namespace:
+# velero restore create --from-backup daily-production-backup-20240115120000 \
+#   --include-namespaces production \
+#   --namespace-mappings production:production-restored

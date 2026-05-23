@@ -1,0 +1,129 @@
+# ============================================================
+# Custom Resource Definitions (CRDs) — Extend the K8s API
+# ============================================================
+# CRDs let you define your own resource types (like Deployment
+# or Service, but for YOUR domain objects).
+#
+# Example: A "WebApp" CRD that packages Deployment + Service +
+#          Ingress into one object that a custom Operator manages.
+# ============================================================
+
+# ── Step 1: Define the CRD (schema for your custom resource) ──
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: webapps.apps.example.com
+spec:
+  group: apps.example.com
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            required: [image, replicas]
+            properties:
+              image:
+                type: string
+                description: "Docker image for the webapp"
+              replicas:
+                type: integer
+                minimum: 1
+                maximum: 100
+                default: 2
+              port:
+                type: integer
+                default: 8080
+              ingress:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: false
+                  hostname:
+                    type: string
+              resources:
+                type: object
+                properties:
+                  cpu:
+                    type: string
+                    default: "100m"
+                  memory:
+                    type: string
+                    default: "128Mi"
+              env:
+                type: array
+                items:
+                  type: object
+                  required: [name, value]
+                  properties:
+                    name:
+                      type: string
+                    value:
+                      type: string
+          status:
+            type: object
+            properties:
+              availableReplicas:
+                type: integer
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    message:
+                      type: string
+    additionalPrinterColumns:
+    - name: Image
+      type: string
+      jsonPath: .spec.image
+    - name: Replicas
+      type: integer
+      jsonPath: .spec.replicas
+    - name: Available
+      type: integer
+      jsonPath: .status.availableReplicas
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    subresources:
+      status: {}
+      scale:
+        specReplicasPath: .spec.replicas
+        statusReplicasPath: .status.availableReplicas
+  scope: Namespaced
+  names:
+    plural: webapps
+    singular: webapp
+    kind: WebApp
+    shortNames: [wa]
+---
+# ── Step 2: Create a Custom Resource (instance of your CRD) ───
+apiVersion: apps.example.com/v1alpha1
+kind: WebApp
+metadata:
+  name: my-service
+  namespace: production
+spec:
+  image: myrepo/my-service:1.0.0
+  replicas: 3
+  port: 8080
+  ingress:
+    enabled: true
+    hostname: my-service.example.com
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  env:
+  - name: LOG_LEVEL
+    value: INFO
+  - name: DB_HOST
+    value: postgres-service

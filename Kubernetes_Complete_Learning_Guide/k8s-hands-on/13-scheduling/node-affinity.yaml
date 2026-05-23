@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssd-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ssd-app
+  template:
+    metadata:
+      labels:
+        app: ssd-app
+    spec:
+      affinity:
+        nodeAffinity:
+          # HARD requirement: pod will NOT schedule if not met
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: disktype
+                operator: In      # In, NotIn, Exists, DoesNotExist, Gt, Lt
+                values:
+                - ssd
+              - key: kubernetes.io/arch
+                operator: In
+                values:
+                - amd64
+
+          # SOFT preference: scheduler prefers this but won't block if not met
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 80            # Higher weight = stronger preference (1-100)
+            preference:
+              matchExpressions:
+              - key: zone
+                operator: In
+                values:
+                - us-east-1a
+          - weight: 20
+            preference:
+              matchExpressions:
+              - key: role
+                operator: In
+                values:
+                - compute
+
+      containers:
+      - name: app
+        image: nginx:1.25
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"

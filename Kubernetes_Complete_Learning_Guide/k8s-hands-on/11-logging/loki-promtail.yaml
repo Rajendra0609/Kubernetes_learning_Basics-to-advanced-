@@ -1,0 +1,99 @@
+# ============================================================
+# Loki + Promtail — Lightweight Log Aggregation (Grafana Stack)
+# ============================================================
+# Loki is like Prometheus but for logs. Much cheaper than ES:
+#   - Only indexes metadata (labels), not full text
+#   - Integrates natively with Grafana dashboards
+#
+# Install:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm install loki grafana/loki-stack \
+#     --namespace logging --create-namespace \
+#     --set promtail.enabled=true \
+#     --set loki.persistence.enabled=true \
+#     --set loki.persistence.storageClassName=fast-ssd \
+#     --set loki.persistence.size=50Gi
+# ============================================================
+
+# ── Promtail DaemonSet ConfigMap ──────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: logging
+data:
+  promtail.yaml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+
+    positions:
+      filename: /tmp/positions.yaml
+
+    clients:
+      - url: http://loki.logging.svc.cluster.local:3100/loki/api/v1/push
+
+    scrape_configs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: __host__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+          - replacement: /var/log/pods/*$1/*.log
+            separator: /
+            source_labels:
+              - __meta_kubernetes_pod_uid
+              - __meta_kubernetes_pod_container_name
+            target_label: __path__
+
+      # Parse JSON log lines and promote fields to labels
+      - job_name: kubernetes-pods-json
+        kubernetes_sd_configs:
+          - role: pod
+        pipeline_stages:
+          - json:
+              expressions:
+                level: level
+                msg: message
+                traceId: traceId
+          - labels:
+              level:
+              traceId:
+          - output:
+              source: msg
+        relabel_configs:
+          - action: keep
+            regex: "true"
+            source_labels: [__meta_kubernetes_pod_annotation_log_format_json]
+---
+# ── Loki LogQL Query Examples (for documentation) ────────────
+# Save as loki-queries.md in this folder:
+# 
+# # Useful Loki / LogQL Queries
+#
+# All logs from production namespace:
+#   {namespace="production"}
+#
+# Error logs from a specific pod:
+#   {pod="webapp-abc123"} |= "ERROR"
+#
+# Count errors per minute:
+#   sum(rate({namespace="production"} |= "ERROR" [1m])) by (pod)
+#
+# Parse JSON and filter by level:
+#   {namespace="production"} | json | level="error"
+#
+# Latency > 500ms (parsed from JSON):
+#   {namespace="production"} | json | duration > 500ms
+#
+# Correlate with Tempo traces (if traceId present in logs):
+#   {namespace="production"} | json | traceId="abc123"

@@ -1,0 +1,104 @@
+# ============================================================
+# Kubernetes Namespaces — Logical Cluster Partitioning
+# ============================================================
+# Namespaces isolate resources. Every real cluster has at least:
+#   default, kube-system, kube-public, kube-node-lease (built-in)
+# You create additional namespaces per environment / team / app.
+# ============================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: development
+  labels:
+    env: development
+    team: platform
+  annotations:
+    description: "Development environment – loose resource limits"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+  labels:
+    env: staging
+    team: platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    env: production
+    team: platform
+  annotations:
+    description: "Production – strict quotas, no exec, no port-forward"
+---
+# ── Resource Quota: cap what the 'development' namespace can use ──
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dev-quota
+  namespace: development
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "20"
+    services: "10"
+    persistentvolumeclaims: "5"
+    secrets: "20"
+    configmaps: "20"
+---
+# ── LimitRange: enforce per-Pod/Container defaults in 'development' ──
+# Without LimitRange, a Pod with no resource requests uses 0 CPU/memory,
+# which breaks the scheduler's bin-packing decisions.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: dev-limits
+  namespace: development
+spec:
+  limits:
+  - type: Container
+    default:            # injected if container omits limits
+      cpu: "500m"
+      memory: "256Mi"
+    defaultRequest:     # injected if container omits requests
+      cpu: "100m"
+      memory: "64Mi"
+    max:
+      cpu: "2"
+      memory: "2Gi"
+    min:
+      cpu: "50m"
+      memory: "32Mi"
+  - type: Pod
+    max:
+      cpu: "4"
+      memory: "4Gi"
+  - type: PersistentVolumeClaim
+    max:
+      storage: "10Gi"
+    min:
+      storage: "1Gi"
+---
+# ── Strict production quota ──
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: production-quota
+  namespace: production
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    pods: "100"
+    services: "30"
+    persistentvolumeclaims: "20"
+    count/deployments.apps: "30"
+    count/statefulsets.apps: "10"

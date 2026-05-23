@@ -1,0 +1,93 @@
+# Blue (current production)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp
+      slot: blue
+  template:
+    metadata:
+      labels:
+        app: webapp
+        slot: blue
+        version: "1.0"
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.25
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+# Green (new version – deploy, test, then switch)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-green
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webapp
+      slot: green
+  template:
+    metadata:
+      labels:
+        app: webapp
+        slot: green
+        version: "2.0"
+    spec:
+      containers:
+      - name: webapp
+        image: nginx:1.26
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp-svc
+spec:
+  selector:
+    app: webapp
+    slot: blue   # Change to 'green' to switch traffic
+  ports:
+  - port: 80
+    targetPort: 80

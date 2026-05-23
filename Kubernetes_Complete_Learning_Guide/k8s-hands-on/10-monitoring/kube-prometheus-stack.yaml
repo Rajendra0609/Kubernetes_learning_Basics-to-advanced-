@@ -1,0 +1,142 @@
+# ============================================================
+# Prometheus + Grafana Stack — kube-prometheus-stack
+# ============================================================
+# Install the full monitoring stack with one Helm command:
+#
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm repo update
+#   helm install monitoring prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring --create-namespace \
+#     -f kube-prometheus-stack-values.yaml
+#
+# This installs: Prometheus, Alertmanager, Grafana, node-exporter,
+#   kube-state-metrics, Prometheus Operator
+# ============================================================
+
+# ── Helm values for kube-prometheus-stack ────────────────────
+# Save this as kube-prometheus-stack-values.yaml and pass to helm
+
+# (This is the values override — not a K8s manifest)
+# ---
+# grafana:
+#   adminPassword: "changeme"
+#   persistence:
+#     enabled: true
+#     storageClassName: fast-ssd
+#     size: 10Gi
+#   ingress:
+#     enabled: true
+#     ingressClassName: nginx
+#     hosts: [grafana.example.com]
+#     tls:
+#       - secretName: grafana-tls
+#         hosts: [grafana.example.com]
+#
+# prometheus:
+#   prometheusSpec:
+#     retention: 30d
+#     storageSpec:
+#       volumeClaimTemplate:
+#         spec:
+#           storageClassName: fast-ssd
+#           resources:
+#             requests:
+#               storage: 100Gi
+#     resources:
+#       requests:
+#         cpu: 500m
+#         memory: 2Gi
+#       limits:
+#         cpu: 2
+#         memory: 8Gi
+#
+# alertmanager:
+#   alertmanagerSpec:
+#     storage:
+#       volumeClaimTemplate:
+#         spec:
+#           storageClassName: fast-ssd
+#           resources:
+#             requests:
+#               storage: 10Gi
+# ---
+
+# ── ServiceMonitor — tell Prometheus to scrape your app ──────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: webapp-monitor
+  namespace: monitoring
+  labels:
+    release: monitoring           # must match Prometheus selector
+spec:
+  selector:
+    matchLabels:
+      app: webapp
+  namespaceSelector:
+    matchNames: [production]
+  endpoints:
+  - port: metrics               # port name on the Service
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+---
+# ── PodMonitor — scrape pods directly (no Service needed) ────
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: batch-job-monitor
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      monitored: "true"
+  namespaceSelector:
+    any: true
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+---
+# ── Alertmanager Config — route alerts to Slack + PagerDuty ──
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: main-routing
+  namespace: monitoring
+spec:
+  route:
+    receiver: slack-notifications
+    groupBy: [alertname, namespace]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 12h
+    routes:
+    - matchers:
+      - name: severity
+        value: critical
+      receiver: pagerduty-critical
+      repeatInterval: 1h
+    - matchers:
+      - name: severity
+        value: warning
+      receiver: slack-notifications
+  receivers:
+  - name: slack-notifications
+    slackConfigs:
+    - apiURL:
+        name: slack-webhook-secret
+        key: webhook-url
+      channel: '#alerts'
+      sendResolved: true
+      title: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}'
+      text: '{{ range .Alerts }}*Alert:* {{ .Annotations.summary }}\n*Description:* {{ .Annotations.description }}\n*Namespace:* {{ .Labels.namespace }}\n{{ end }}'
+  - name: pagerduty-critical
+    pagerdutyConfigs:
+    - routingKey:
+        name: pagerduty-secret
+        key: routing-key
+      description: '{{ .CommonAnnotations.summary }}'
+      severity: critical

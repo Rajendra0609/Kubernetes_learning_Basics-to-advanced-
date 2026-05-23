@@ -1,0 +1,145 @@
+# ============================================================
+# Storage — StorageClasses, PVs, PVCs, volumeBindingMode
+# ============================================================
+# StorageClass defines HOW storage is provisioned (dynamic).
+# PV = the actual disk. PVC = the claim/request by a workload.
+# ============================================================
+
+# ── StorageClass: fast SSD (e.g. AWS gp3, GCP pd-ssd) ──────
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: ebs.csi.aws.com          # AWS EBS CSI driver
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  encrypted: "true"
+reclaimPolicy: Retain      # RETAIN keeps disk after PVC deleted (production default!)
+allowVolumeExpansion: true # allows PVC resize without pod restart
+volumeBindingMode: WaitForFirstConsumer  # delays binding until pod is scheduled (multi-AZ safe!)
+---
+# ── StorageClass: standard (default, delete on release) ──────
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp2
+  encrypted: "true"
+reclaimPolicy: Delete           # cleans up PV automatically
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+---
+# ── StorageClass: shared NFS / ReadWriteMany ─────────────────
+# Use for shared file systems (multiple pods reading/writing same volume)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs-shared
+provisioner: efs.csi.aws.com    # AWS EFS CSI driver
+parameters:
+  provisioningMode: efs-ap
+  fileSystemId: fs-XXXXXXXX      # replace with your EFS filesystem ID
+  directoryPerms: "700"
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+---
+# ── Static PV (pre-provisioned disk, no StorageClass) ────────
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-data-pv
+  labels:
+    type: local
+    app: postgres
+spec:
+  storageClassName: fast-ssd
+  capacity:
+    storage: 50Gi
+  accessModes: [ReadWriteOnce]   # Only one pod can mount RW
+  persistentVolumeReclaimPolicy: Retain
+  # For local storage (single node / dev):
+  local:
+    path: /mnt/data/postgres
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values: [worker-node-1]
+---
+# ── PVC: dynamic provisioning request ────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: production
+spec:
+  storageClassName: fast-ssd
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 50Gi
+  # Optional: select a specific static PV by label
+  selector:
+    matchLabels:
+      app: postgres
+---
+# ── PVC: shared ReadWriteMany for uploads ────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uploads-pvc
+  namespace: production
+spec:
+  storageClassName: efs-shared
+  accessModes: [ReadWriteMany]    # Multiple pods can mount RW
+  resources:
+    requests:
+      storage: 100Gi
+---
+# ── VolumeSnapshot: point-in-time backup ─────────────────────
+# Requires: snapshot.storage.k8s.io CRDs + CSI driver with snapshot support
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: ebs-snapshot-class
+  annotations:
+    snapshot.storage.kubernetes.io/is-default-class: "true"
+driver: ebs.csi.aws.com
+deletionPolicy: Retain
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: postgres-snapshot-2024
+  namespace: production
+spec:
+  volumeSnapshotClassName: ebs-snapshot-class
+  source:
+    persistentVolumeClaimName: postgres-pvc
+---
+# ── Restore PVC from snapshot ────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc-restored
+  namespace: production
+spec:
+  storageClassName: fast-ssd
+  dataSource:
+    name: postgres-snapshot-2024
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 50Gi

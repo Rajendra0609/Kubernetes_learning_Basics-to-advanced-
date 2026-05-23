@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: default
+data:
+  # Key-value pairs
+  DATABASE_URL: "postgres://postgres-svc:5432/appdb"
+  LOG_LEVEL: "INFO"
+  MAX_CONNECTIONS: "100"
+
+  # Entire file as a value
+  app.properties: |
+    server.port=8080
+    server.timeout=30s
+    feature.dark_mode=true
+    feature.beta_api=false
+
+  nginx.conf: |
+    server {
+      listen 80;
+      location / {
+        proxy_pass http://backend:8080;
+        proxy_set_header Host $host;
+      }
+    }
+---
+# Pod demonstrating all three ConfigMap consumption patterns
+apiVersion: v1
+kind: Pod
+metadata:
+  name: configmap-demo
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
+
+    # Method 1: All keys as environment variables
+    envFrom:
+    - configMapRef:
+        name: app-config
+
+    # Method 2: Specific key as a named env var
+    env:
+    - name: MY_LOG_LEVEL
+      valueFrom:
+        configMapKeyRef:
+          name: app-config
+          key: LOG_LEVEL
+
+    # Method 3: Volume mount (supports hot-reload without pod restart)
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+    - name: nginx-config
+      mountPath: /etc/nginx/conf.d
+
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+  - name: nginx-config
+    configMap:
+      name: app-config
+      items:
+      - key: nginx.conf
+        path: default.conf
